@@ -1,0 +1,49 @@
+{
+  "name": "ria-3d-shape-editor",
+  "version": "0.1.0",
+  "description": "Generic Point/LineString/Polygon create+edit controller for LuciadRIA with independent per-vertex height (Z) editing",
+  "type": "module",
+  "main": "./lib/index.js",
+  "module": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib/"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "luciadria",
+    "3d",
+    "editor",
+    "controller"
+  ],
+  "author": "",
+  "license": "ISC",
+  "peerDependencies": {
+    "@luciad/ria": ">=2024.1"
+  },
+  "devDependencies": {
+    "@luciad/ria": "^2026.0.9",
+    "tsup": "^8.5.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felipecarrillo100/ria-wfststore"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "fsevents@2.3.3": true
+  }
+}
