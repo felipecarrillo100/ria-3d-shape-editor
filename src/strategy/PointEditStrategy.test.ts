@@ -43,4 +43,8 @@ describe("PointEditStrategy", () => {
     const shape = strategy.createEmptyShape(REFERENCE, createPoint(REFERENCE, [0, 0, 0]));
     expect(strategy.getPreviewClosingSegment(shape)).toBeNull();
   });
+
+  it("is not a closed ring", () => {
+    expect(strategy.isClosedRing).toBe(false);
+  });
 });

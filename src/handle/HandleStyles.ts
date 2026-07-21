@@ -103,6 +103,43 @@ export const VERTEX_INACTIVE_OCCLUDED_ICON_STYLE: IconStyle = {
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
+// A "virtual" per-segment marker, calculated by the controller, not stored in the shape - dragging
+// one inserts a real vertex at that position. Half the size of VERTEX_DEFAULT_ICON_STYLE (8px vs
+// 16px), muted the same way VERTEX_INACTIVE_* is, so it visibly reads as "not a real vertex yet."
+export const MIDPOINT_ICON_STYLE: IconStyle = {
+  url: createCircleIconImage(INACTIVE_COLOR, INACTIVE_STROKE, 2),
+  width: "8px",
+  height: "8px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const MIDPOINT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createCircleIconImage(OCCLUDED_COLOR, OCCLUDED_STROKE, 2),
+  width: "8px",
+  height: "8px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+// Grows toward vertex size and brightens on hover, matching the DEFAULT/FOCUSED convention used by
+// every other handle here - a visual cue that dragging this will add a vertex.
+export const MIDPOINT_HOVERED_ICON_STYLE: IconStyle = {
+  url: createCircleIconImage(FOCUSED_COLOR, FOCUSED_STROKE, 4),
+  width: "12px",
+  height: "12px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const MIDPOINT_HOVERED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createCircleIconImage(OCCLUDED_COLOR, OCCLUDED_STROKE, 4),
+  width: "12px",
+  height: "12px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
 export const GUIDE_START_ICON_STYLE: IconStyle = {
   url: createCircleIconImage(VERTEX_COLOR, VERTEX_STROKE, 4),
   width: "14px",

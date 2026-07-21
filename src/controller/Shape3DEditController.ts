@@ -29,7 +29,8 @@ import {
   verticalMovePointInteraction,
 } from "../handle/HandleInteractions.js";
 import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
-import {computePointHandlePositions} from "../handle/PointHandleLayout.js";
+import {computePointHandlePositions, PointHandlePositions} from "../handle/PointHandleLayout.js";
+import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js";
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
 import {add, distance, normalize, scale, toPoint} from "../math/Vector3Util.js";
 import {formatLength, UomFamily} from "../uom/formatLength.js";
@@ -46,6 +47,10 @@ import {
   HEIGHT_DROP_LINE_STYLE,
   HEIGHT_HANDLE_DEFAULT_ICON_STYLE,
   HEIGHT_HANDLE_FOCUSED_ICON_STYLE,
+  MIDPOINT_HOVERED_ICON_STYLE,
+  MIDPOINT_HOVERED_OCCLUDED_ICON_STYLE,
+  MIDPOINT_ICON_STYLE,
+  MIDPOINT_OCCLUDED_ICON_STYLE,
   MOVE_HANDLE_DEFAULT_ICON_STYLE,
   MOVE_HANDLE_FOCUSED_ICON_STYLE,
   MOVE_PLANE_OCCLUDED_STYLE,
@@ -168,6 +173,8 @@ export class Shape3DEditController extends Controller {
   private _creationSession: CreationSession<EditableShape> | null;
 
   private _hoveredVertexIndex: number | null = null;
+  /** Meaningful only when `_hoveredHandleKind === "midpoint"` - which segment is hovered. */
+  private _hoveredSegmentIndex: number | null = null;
   private _hoveredHandleKind: HandleKind | null = null;
   private _activeHandle: EditHandle | null = null;
   /** Set right before `map.controller = null` by endEditing(); read once by onDeactivate. */
@@ -178,8 +185,19 @@ export class Shape3DEditController extends Controller {
    * clickable marker, so editing a shape with many vertices doesn't become an unmanageable field
    * of overlapping handles. Always a valid index once _phase === EDITING (trivially always 0 for
    * Point, which only ever has one vertex). Meaningless while CREATING.
+   *
+   * Only meaningful when `_activeSegmentIndex === null` - the active target is either a real
+   * vertex (this field) or a virtual midpoint (`_activeSegmentIndex`), never both.
    */
   private _activeVertexIndex = 0;
+  /**
+   * When non-null, a virtual per-segment midpoint (not `_activeVertexIndex`) is the active
+   * target - selected by clicking it, showing the same full handle set a real active vertex
+   * would. Dragging one of those handles promotes it into a real vertex right then (see
+   * handleEditDrag) and clears this back to null; merely selecting it without dragging leaves the
+   * shape untouched.
+   */
+  private _activeSegmentIndex: number | null = null;
 
   /**
    * `layer` is required so the controller can find the one reference (`layer.model.reference`) any
@@ -305,6 +323,9 @@ export class Shape3DEditController extends Controller {
     // Defensive - the double-click-removal handler already keeps this correct throughout a
     // session, so this is not expected to ever actually change anything.
     this._activeVertexIndex = Math.min(this._activeVertexIndex, originalCount - 1);
+    // A selected-but-not-yet-promoted midpoint's segment identity isn't tracked across a revert -
+    // simplest to just deselect back to the (now valid again) active vertex.
+    this._activeSegmentIndex = null;
     this.invalidate();
     this.emitShapeChanged();
   }
@@ -446,6 +467,12 @@ export class Shape3DEditController extends Controller {
     return EVENT_IGNORED;
   }
 
+  /** The full free/move/height/finish/cancel candidate set offered by whichever target (a real vertex or a virtual midpoint) is currently active. */
+  private static fullHandleCandidates(positions: PointHandlePositions): Array<[HandleKind, Point | null]> {
+    return [["free", positions.free], ["move", positions.move], ["height", positions.height],
+            ["finish", positions.finish], ["cancel", positions.cancel]];
+  }
+
   /**
    * Recomputes which handle (if any) is under `viewPoint`, updating `_hoveredVertexIndex`/
    * `_hoveredHandleKind`. Returns whether the hovered handle changed (so callers can decide
@@ -456,17 +483,20 @@ export class Shape3DEditController extends Controller {
     const count = this._strategy.vertexCount(shape);
 
     let bestVertexIndex = -1;
+    let bestSegmentIndex = -1;
     let bestKind: HandleKind | null = null;
     let bestDistance = this._vertexHitPixelTolerance;
 
     for (let i = 0; i < count; i++) {
       const positions = computePointHandlePositions(map, this._strategy.getVertex(shape, i));
       // Only the active vertex offers the full handle set - every other vertex only offers its
-      // plain marker as a hit target (nothing else is drawn for it, see drawEditHandles).
-      const candidates: Array<[HandleKind, Point | null]> = i === this._activeVertexIndex
-          ? [["free", positions.free], ["move", positions.move], ["height", positions.height],
-             ["finish", positions.finish], ["cancel", positions.cancel]]
-          : [["free", positions.free]];
+      // plain marker as a hit target (nothing else is drawn for it, see drawEditHandles). If a
+      // midpoint is the active target instead, no vertex is active - every vertex is downgraded
+      // to just its plain marker.
+      const candidates: Array<[HandleKind, Point | null]> =
+          this._activeSegmentIndex === null && i === this._activeVertexIndex
+              ? Shape3DEditController.fullHandleCandidates(positions)
+              : [["free", positions.free]];
       for (const [kind, position] of candidates) {
         if (!position) {
           continue;
@@ -475,16 +505,46 @@ export class Shape3DEditController extends Controller {
         if (pixelDistance !== null && pixelDistance <= bestDistance) {
           bestDistance = pixelDistance;
           bestVertexIndex = i;
+          bestSegmentIndex = -1;
           bestKind = kind;
         }
       }
     }
 
-    const found = bestVertexIndex >= 0;
-    const changed = bestVertexIndex !== this._hoveredVertexIndex || bestKind !== this._hoveredHandleKind;
+    // Virtual per-segment midpoint markers - LineString/Polygon only (Point has 0 segments, so
+    // this loop is a no-op there). Folded into the same best-distance competition as the vertex
+    // candidates above, so a midpoint only wins when it's genuinely the closest thing on screen.
+    // The active midpoint (if any) offers the same full handle set an active vertex would, around
+    // its calculated position - every other segment just offers its small "select me" marker.
+    const segmentCount = this._strategy.isClosedRing ? count : count - 1;
+    for (let i = 0; i < segmentCount; i++) {
+      const a = this._strategy.getVertex(shape, i);
+      const b = this._strategy.getVertex(shape, (i + 1) % count);
+      const midpointPosition = computeSegmentMidpointPosition(map, a, b);
+      const candidates: Array<[HandleKind, Point | null]> = this._activeSegmentIndex === i
+          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition))
+          : [["midpoint", midpointPosition]];
+      for (const [kind, position] of candidates) {
+        if (!position) {
+          continue;
+        }
+        const pixelDistance = this.pixelDistanceToViewPoint(map, position, viewPoint);
+        if (pixelDistance !== null && pixelDistance <= bestDistance) {
+          bestDistance = pixelDistance;
+          bestVertexIndex = -1;
+          bestSegmentIndex = i;
+          bestKind = kind;
+        }
+      }
+    }
+
+    const found = bestKind !== null;
+    const changed = bestVertexIndex !== this._hoveredVertexIndex ||
+        bestSegmentIndex !== this._hoveredSegmentIndex || bestKind !== this._hoveredHandleKind;
     if (changed) {
-      this._hoveredVertexIndex = found ? bestVertexIndex : null;
-      this._hoveredHandleKind = bestKind;
+      this._hoveredVertexIndex = bestVertexIndex >= 0 ? bestVertexIndex : null;
+      this._hoveredSegmentIndex = bestSegmentIndex >= 0 ? bestSegmentIndex : null;
+      this._hoveredHandleKind = found ? bestKind : null;
     }
     return changed;
   }
@@ -496,20 +556,23 @@ export class Shape3DEditController extends Controller {
     if (this.updateHoverState(map, event.viewPoint)) {
       this.invalidate();
     }
-    return this._hoveredVertexIndex !== null ? EVENT_HANDLED : EVENT_IGNORED;
+    return this._hoveredHandleKind !== null ? EVENT_HANDLED : EVENT_IGNORED;
   }
 
   /**
    * Clicking the finish (checkmark) or cancel (X) handle ends editing - see endEditing(). Clicking
    * a different (non-active) vertex's plain marker switches which vertex is active, moving the
-   * full handle set there - this is the only way to activate a vertex; dragging one directly does
-   * nothing (see handleEditDrag) since a click and a drag are mutually exclusive outcomes of a
-   * single mouse gesture, not two separate steps. Any other click (on another handle, or on empty
-   * space) is a no-op here. An earlier version tried to treat any click on empty space as "end
-   * editing," but that turned out to be unreliable in practice - a real click almost always has a
-   * pixel or two of movement between mouse-down and mouse-up, which can register as the start of a
-   * camera drag before it's ever seen as "nothing hovered." Dedicated, always-visible handles are
-   * unambiguous instead.
+   * full handle set there; clicking a virtual midpoint's plain marker does the same, making it the
+   * active target instead of any vertex - either way, this is the only way to activate a target,
+   * dragging one directly does nothing (see handleEditDrag) since a click and a drag are mutually
+   * exclusive outcomes of a single mouse gesture, not two separate steps. Selecting a midpoint
+   * does NOT touch the shape by itself - only a drag on one of its now-visible handles promotes it
+   * into a real vertex (see handleEditDrag); selecting it and never dragging leaves it virtual.
+   * Any other click (on another handle, or on empty space) is a no-op here. An earlier version
+   * tried to treat any click on empty space as "end editing," but that turned out to be unreliable
+   * in practice - a real click almost always has a pixel or two of movement between mouse-down and
+   * mouse-up, which can register as the start of a camera drag before it's ever seen as "nothing
+   * hovered." Dedicated, always-visible handles are unambiguous instead.
    */
   private handleEditClick(map: WebGLMap, event: GestureEvent): HandleEventResult {
     if ((event.domEvent as MouseEvent).button !== undefined && (event.domEvent as MouseEvent).button !== 0) {
@@ -519,12 +582,19 @@ export class Shape3DEditController extends Controller {
       this.endEditing(this._hoveredHandleKind === "finish");
       return EVENT_HANDLED;
     }
-    if (this._hoveredVertexIndex !== null && this._hoveredVertexIndex !== this._activeVertexIndex) {
-      this._activeVertexIndex = this._hoveredVertexIndex;
+    if (this._hoveredHandleKind === "midpoint" && this._hoveredSegmentIndex !== null) {
+      this._activeSegmentIndex = this._hoveredSegmentIndex;
       this.invalidate();
       return EVENT_HANDLED;
     }
-    return this._hoveredVertexIndex !== null ? EVENT_HANDLED : EVENT_IGNORED;
+    if (this._hoveredVertexIndex !== null &&
+        (this._activeSegmentIndex !== null || this._hoveredVertexIndex !== this._activeVertexIndex)) {
+      this._activeVertexIndex = this._hoveredVertexIndex;
+      this._activeSegmentIndex = null;
+      this.invalidate();
+      return EVENT_HANDLED;
+    }
+    return this._hoveredHandleKind !== null ? EVENT_HANDLED : EVENT_IGNORED;
   }
 
   private pixelDistanceToViewPoint(map: WebGLMap, point: Point, viewPoint: Point): number | null {
@@ -540,7 +610,7 @@ export class Shape3DEditController extends Controller {
     const shape = this._shape!;
 
     if (!this._activeHandle) {
-      if (this._hoveredVertexIndex === null || !this._hoveredHandleKind) {
+      if (this._hoveredHandleKind === null) {
         return EVENT_IGNORED;
       }
       if (this._hoveredHandleKind === "finish" || this._hoveredHandleKind === "cancel") {
@@ -548,15 +618,46 @@ export class Shape3DEditController extends Controller {
         // camera through what's meant to be a fixed button) without acting on it.
         return EVENT_HANDLED;
       }
-      if (this._hoveredVertexIndex !== this._activeVertexIndex) {
-        // Only the active vertex's handles are draggable - a non-active vertex's plain marker
-        // only responds to a click (which switches active, see handleEditClick), never a drag.
-        // Absorb rather than ignore, same reasoning as the finish/cancel case just above.
+      if (this._hoveredHandleKind === "midpoint") {
+        // A drag never selects a midpoint by itself - only a click does (handleEditClick). Once
+        // selected/active, its own move/height/free handles become draggable below.
         return EVENT_HANDLED;
       }
+
+      let vertexIndex: number;
+      if (this._activeSegmentIndex !== null) {
+        if (this._hoveredSegmentIndex !== this._activeSegmentIndex) {
+          // Only the active midpoint's own handles are draggable - same rule as a non-active
+          // vertex just below.
+          return EVENT_HANDLED;
+        }
+        // Dragging one of the active midpoint's handles is what promotes it into a real,
+        // committed vertex, right here - before the drag continues exactly like an ordinary
+        // "free"/"move"/"height" drag on that new vertex, via the unmodified code below.
+        const count = this._strategy.vertexCount(shape);
+        const segmentIndex = this._activeSegmentIndex;
+        const a = this._strategy.getVertex(shape, segmentIndex);
+        const b = this._strategy.getVertex(shape, (segmentIndex + 1) % count);
+        const midpointInMapRef = computeSegmentMidpointPosition(map, a, b);
+        const midpointInShapeRef = createTransformation(map.reference, shape.reference!).transform(midpointInMapRef);
+        vertexIndex = segmentIndex + 1;
+        this._strategy.insertVertex(shape, vertexIndex, midpointInShapeRef);
+        this._activeVertexIndex = vertexIndex;
+        this._activeSegmentIndex = null;
+        this.emitShapeChanged();
+      } else {
+        if (this._hoveredVertexIndex !== this._activeVertexIndex) {
+          // Only the active vertex's handles are draggable - a non-active vertex's plain marker
+          // only responds to a click (which switches active, see handleEditClick), never a drag.
+          // Absorb rather than ignore, same reasoning as the finish/cancel case just above.
+          return EVENT_HANDLED;
+        }
+        vertexIndex = this._hoveredVertexIndex!;
+      }
+
       const kind = this._hoveredHandleKind;
       const handle = new EditHandle(kind);
-      handle.vertexIndex = this._hoveredVertexIndex;
+      handle.vertexIndex = vertexIndex;
       handle.focused = true;
       this._activeHandle = handle;
 
@@ -598,11 +699,19 @@ export class Shape3DEditController extends Controller {
     if (this._hoveredVertexIndex === index) {
       this._hoveredVertexIndex = null;
       this._hoveredHandleKind = null;
+    } else if (this._hoveredHandleKind === "midpoint") {
+      // Segment indexing shifts globally on a removal - a stale hovered segment isn't worth
+      // reconciling, it'll be recomputed on the next mouse move regardless.
+      this._hoveredSegmentIndex = null;
+      this._hoveredHandleKind = null;
     }
     // Keep exactly one active vertex, always - either the same logical one (reindexed), or,
-    // if the active vertex was the one just removed, whatever now occupies its old slot.
+    // if the active vertex was the one just removed, whatever now occupies its old slot. A
+    // selected-but-not-yet-promoted midpoint doesn't survive a removal either, same reasoning as
+    // the stale hover above - just fall back to the active vertex.
     this._activeVertexIndex =
         nextActiveVertexIndex(this._activeVertexIndex, index, this._strategy.vertexCount(shape));
+    this._activeSegmentIndex = null;
     this.emitShapeChanged();
     this.invalidate();
     return EVENT_HANDLED;
@@ -660,6 +769,29 @@ export class Shape3DEditController extends Controller {
     }
   }
 
+  /** Draws the free/move/height/finish/cancel handle set at `positions` - shared by the active vertex and the active midpoint, the only two things that ever get the full set. */
+  private drawFullHandleSet(geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null): void {
+    if (activeKind === "free") {
+      geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_ICON_STYLE);
+      geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_OCCLUDED_ICON_STYLE);
+    } else {
+      geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_ICON_STYLE);
+      geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_OCCLUDED_ICON_STYLE);
+    }
+    if (positions.move) {
+      geoCanvas.drawIcon(positions.move, activeKind === "move" ? MOVE_HANDLE_FOCUSED_ICON_STYLE : MOVE_HANDLE_DEFAULT_ICON_STYLE);
+    }
+    if (positions.height) {
+      geoCanvas.drawIcon(positions.height, activeKind === "height" ? HEIGHT_HANDLE_FOCUSED_ICON_STYLE : HEIGHT_HANDLE_DEFAULT_ICON_STYLE);
+    }
+    if (positions.finish) {
+      geoCanvas.drawIcon(positions.finish, activeKind === "finish" ? FINISH_HANDLE_FOCUSED_ICON_STYLE : FINISH_HANDLE_DEFAULT_ICON_STYLE);
+    }
+    if (positions.cancel) {
+      geoCanvas.drawIcon(positions.cancel, activeKind === "cancel" ? CANCEL_HANDLE_FOCUSED_ICON_STYLE : CANCEL_HANDLE_DEFAULT_ICON_STYLE);
+    }
+  }
+
   private drawEditHandles(geoCanvas: GeoCanvas): void {
     const map = this.map as WebGLMap | null;
     const shape = this._shape;
@@ -673,9 +805,11 @@ export class Shape3DEditController extends Controller {
     for (let i = 0; i < count; i++) {
       const positions = computePointHandlePositions(map, this._strategy.getVertex(shape, i));
 
-      if (i !== this._activeVertexIndex) {
-        // Non-active vertex - just a plain, clickable marker (click it to make it active); no
-        // move/height/finish/cancel clutter for shapes with many vertices.
+      if (this._activeSegmentIndex !== null || i !== this._activeVertexIndex) {
+        // No vertex is active while a midpoint is the active target instead - every vertex draws
+        // just a plain, clickable marker (click it to make it active); same for a non-active
+        // vertex when nothing else is selected. No move/height/finish/cancel clutter for shapes
+        // with many vertices.
         geoCanvas.drawIcon(positions.free, VERTEX_INACTIVE_ICON_STYLE);
         geoCanvas.drawIcon(positions.free, VERTEX_INACTIVE_OCCLUDED_ICON_STYLE);
         continue;
@@ -685,26 +819,31 @@ export class Shape3DEditController extends Controller {
           i === this._activeHandle?.vertexIndex ? this._activeHandle!.kind :
           i === this._hoveredVertexIndex ? this._hoveredHandleKind :
           null;
+      this.drawFullHandleSet(geoCanvas, positions, activeKind);
+    }
 
-      if (activeKind === "free") {
-        geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_ICON_STYLE);
-        geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_OCCLUDED_ICON_STYLE);
-      } else {
-        geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_ICON_STYLE);
-        geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_OCCLUDED_ICON_STYLE);
+    // Virtual per-segment midpoint markers - recomputed live from the current vertex list every
+    // frame, so once one is promoted (see handleEditDrag), the two new segments either side of it
+    // get their own fresh midpoints automatically, with no extra bookkeeping needed here. The
+    // active midpoint (if any) gets the same full handle set an active vertex would, around its
+    // calculated (not-yet-committed) position; every other segment just gets its small marker,
+    // brightened while hovered as a "you can select this" cue.
+    const segmentCount = this._strategy.isClosedRing ? count : count - 1;
+    for (let i = 0; i < segmentCount; i++) {
+      const a = this._strategy.getVertex(shape, i);
+      const b = this._strategy.getVertex(shape, (i + 1) % count);
+      const midpoint = computeSegmentMidpointPosition(map, a, b);
+
+      if (this._activeSegmentIndex !== i) {
+        const hovered = this._hoveredHandleKind === "midpoint" && this._hoveredSegmentIndex === i;
+        geoCanvas.drawIcon(midpoint, hovered ? MIDPOINT_HOVERED_ICON_STYLE : MIDPOINT_ICON_STYLE);
+        geoCanvas.drawIcon(midpoint, hovered ? MIDPOINT_HOVERED_OCCLUDED_ICON_STYLE : MIDPOINT_OCCLUDED_ICON_STYLE);
+        continue;
       }
-      if (positions.move) {
-        geoCanvas.drawIcon(positions.move, activeKind === "move" ? MOVE_HANDLE_FOCUSED_ICON_STYLE : MOVE_HANDLE_DEFAULT_ICON_STYLE);
-      }
-      if (positions.height) {
-        geoCanvas.drawIcon(positions.height, activeKind === "height" ? HEIGHT_HANDLE_FOCUSED_ICON_STYLE : HEIGHT_HANDLE_DEFAULT_ICON_STYLE);
-      }
-      if (positions.finish) {
-        geoCanvas.drawIcon(positions.finish, activeKind === "finish" ? FINISH_HANDLE_FOCUSED_ICON_STYLE : FINISH_HANDLE_DEFAULT_ICON_STYLE);
-      }
-      if (positions.cancel) {
-        geoCanvas.drawIcon(positions.cancel, activeKind === "cancel" ? CANCEL_HANDLE_FOCUSED_ICON_STYLE : CANCEL_HANDLE_DEFAULT_ICON_STYLE);
-      }
+
+      const positions = computePointHandlePositions(map, midpoint);
+      const activeKind: HandleKind | null = this._hoveredSegmentIndex === i ? this._hoveredHandleKind : null;
+      this.drawFullHandleSet(geoCanvas, positions, activeKind);
     }
 
     const handle = this._activeHandle;

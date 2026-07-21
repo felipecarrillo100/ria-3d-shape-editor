@@ -3,7 +3,10 @@
 // written from scratch and trimmed to exactly what this package needs.
 import {Point} from "@luciad/ria/shape/Point.js";
 
-export type HandleKind = "free" | "move" | "height" | "finish" | "cancel";
+// "midpoint" only ever appears as a `_hoveredHandleKind` value (Shape3DEditController.ts) - a
+// midpoint marker is never itself the kind of a live EditHandle, since dragging one immediately
+// inserts a real vertex and continues as an ordinary "free" drag on that new vertex.
+export type HandleKind = "free" | "move" | "height" | "finish" | "cancel" | "midpoint";
 
 /**
  * Tracks the live state of one draggable handle (free/move/height) while it targets a particular

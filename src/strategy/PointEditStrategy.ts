@@ -9,6 +9,7 @@ export class PointEditStrategy implements ShapeEditStrategy<Point> {
   readonly shapeType = ShapeType.POINT;
   readonly minVertexCount = 1;
   readonly finishesImmediatelyAfterVertex = true;
+  readonly isClosedRing = false;
 
   createEmptyShape(reference: CoordinateReference, firstPoint: Point): Point {
     return createPoint(reference, [firstPoint.x, firstPoint.y, firstPoint.z]);

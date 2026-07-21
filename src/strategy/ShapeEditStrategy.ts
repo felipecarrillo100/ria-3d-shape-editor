@@ -15,6 +15,8 @@ export interface ShapeEditStrategy<S extends EditableShape = EditableShape> {
   readonly minVertexCount: number;
   /** True for Point: creation finishes immediately after the first (and only) vertex is placed. */
   readonly finishesImmediatelyAfterVertex: boolean;
+  /** True for Polygon: segment `vertexCount - 1` wraps back to vertex `0`. */
+  readonly isClosedRing: boolean;
 
   /** Creates a new shape containing exactly one vertex, at `firstPoint`. */
   createEmptyShape(reference: CoordinateReference, firstPoint: Point): S;

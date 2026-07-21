@@ -10,6 +10,7 @@ export class LineStringEditStrategy implements ShapeEditStrategy<Polyline> {
   readonly shapeType = ShapeType.POLYLINE;
   readonly minVertexCount = 2;
   readonly finishesImmediatelyAfterVertex = false;
+  readonly isClosedRing = false;
 
   createEmptyShape(reference: CoordinateReference, firstPoint: Point): Polyline {
     return createPolyline(reference, [firstPoint]);

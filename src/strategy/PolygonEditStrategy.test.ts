@@ -51,6 +51,10 @@ describe("PolygonEditStrategy", () => {
     expect(segment![1].y).toBeCloseTo(0);
   });
 
+  it("is a closed ring", () => {
+    expect(strategy.isClosedRing).toBe(true);
+  });
+
   it("insertVertex re-inserts a removed middle vertex at its original index", () => {
     const shape = buildShape(strategy, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
     strategy.removeVertex(shape, 1);

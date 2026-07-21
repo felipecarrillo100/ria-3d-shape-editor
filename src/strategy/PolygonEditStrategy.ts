@@ -14,6 +14,7 @@ export class PolygonEditStrategy implements ShapeEditStrategy<Polygon> {
   readonly shapeType = ShapeType.POLYGON;
   readonly minVertexCount = 3;
   readonly finishesImmediatelyAfterVertex = false;
+  readonly isClosedRing = true;
 
   createEmptyShape(reference: CoordinateReference, firstPoint: Point): Polygon {
     return createPolygon(reference, [firstPoint]);
