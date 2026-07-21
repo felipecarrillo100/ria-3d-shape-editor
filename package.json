@@ -19,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "demo": "npm --prefix demo run dev"
   },
   "keywords": [
     "luciadria",

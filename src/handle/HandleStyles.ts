@@ -31,6 +31,9 @@ const FOCUSED_STROKE = "rgb(20,90,100)";
 const GUIDE_COLOR = "rgb(255,200,0)";
 const MOVE_COLOR = "rgb(110,200,110)";
 const HEIGHT_COLOR = "rgb(255,150,60)";
+// Distinct from GUIDE_COLOR above (yellow), which is already used for the drag-displacement line -
+// the drop line needs its own identity, not to be confused with that one.
+const DROP_LINE_COLOR = "rgb(60,140,240)";
 const FINISH_COLOR = "rgb(80,150,255)";
 const CANCEL_COLOR = "rgb(230,80,80)";
 const HANDLE_BG = "rgba(30,30,30,0.55)";
@@ -205,5 +208,39 @@ export const PREVIEW_SHAPE_STYLE: ShapeStyle = {
 export const PREVIEW_CLOSING_SEGMENT_STYLE: ShapeStyle = {
   stroke: {color: "rgba(255,255,255,0.6)", width: 1, dash: [6, 4]},
   occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+// A minimalistic wireframe grid, drawn as a VISIBLE_ONLY/OCCLUDED_ONLY pair, same general idiom
+// as the occlusion-aware icons above. Main color is the same translucent cyan/alpha as
+// @luciad/ria-toolbox-ria/slicing/controllers/BoxCreateController.ts's PLANE_STYLE_HIDDEN (fainter
+// than the toolbox's own visible PLANE_STYLE, by design - less visually loud) - occlusion switches
+// to red at the same alpha, so hitting a building reads as a clear color change, not just a fade.
+export const MOVE_PLANE_STYLE: ShapeStyle = {
+  stroke: {color: "rgba(171,232,229,0.50)", width: 1},
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const MOVE_PLANE_OCCLUDED_STYLE: ShapeStyle = {
+  stroke: {color: "rgba(230,40,40,0.75)", width: 1},
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+// A vertical line drawn during height/free drags, from the current position downward - styled as
+// the same VISIBLE_ONLY/OCCLUDED_ONLY pair, so the portion that passes into/behind terrain or a
+// mesh shows in OCCLUDED_COLOR. This needs no raycasting at all: the drag's own direction is
+// already the correct true-vertical axis, and RIA's own depth test is what actually reveals
+// "this has reached the ground/a building," not any computed intersection.
+export const HEIGHT_DROP_LINE_STYLE: ShapeStyle = {
+  stroke: {color: DROP_LINE_COLOR, width: 2},
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const HEIGHT_DROP_LINE_OCCLUDED_STYLE: ShapeStyle = {
+  stroke: {color: OCCLUDED_COLOR, width: 2},
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };

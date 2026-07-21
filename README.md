@@ -39,7 +39,7 @@ controller.on("ShapeChanged", ({shape}) => {
 
 ```typescript
 // Edit an existing shape directly - skips creation, starts in edit mode immediately
-const controller = new Shape3DEditController(ShapeType.POLYGON, layer, existingPolygon);
+const controller = new Shape3DEditController(ShapeType.POLYGON, layer, {existingShape: existingPolygon});
 map.controller = controller;
 ```
 

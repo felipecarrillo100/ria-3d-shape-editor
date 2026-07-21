@@ -22,21 +22,21 @@ describe("Shape3DEditController constructor", () => {
 
   it("starts in the editing phase immediately when given an existing shape", () => {
     const point = createPoint(REFERENCE, [1, 2, 3]);
-    const controller = new Shape3DEditController(ShapeType.POINT, fakeLayer, point);
+    const controller = new Shape3DEditController(ShapeType.POINT, fakeLayer, {existingShape: point});
     expect(controller.phase).toBe("editing");
     expect(controller.shape).toBe(point);
   });
 
   it("throws when the existing shape's type does not match the requested shape type", () => {
     const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0]]);
-    expect(() => new Shape3DEditController(ShapeType.POINT, fakeLayer, polygon as any)).toThrow();
+    expect(() => new Shape3DEditController(ShapeType.POINT, fakeLayer, {existingShape: polygon as any})).toThrow();
   });
 });
 
 describe("Shape3DEditController.cancel()", () => {
   it("reverts a vertex moved mid-session back to its original position", () => {
     const point = createPoint(REFERENCE, [1, 2, 3]);
-    const controller = new Shape3DEditController(ShapeType.POINT, fakeLayer, point);
+    const controller = new Shape3DEditController(ShapeType.POINT, fakeLayer, {existingShape: point});
     controller.setVertexPosition(0, createPoint(REFERENCE, [100, 200, 300]));
 
     controller.cancel();
@@ -48,7 +48,7 @@ describe("Shape3DEditController.cancel()", () => {
 
   it("re-inserts a vertex removed mid-session, restoring full count and order - not just positions", () => {
     const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
-    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, polygon);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
 
     // Simulate what a mid-session double-click-remove (handleEditDoubleClick) leaves behind -
     // the shape itself is the same public Polygon API a real removal would have used.

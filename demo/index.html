@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ria-3d-shape-editor demo (MemoryStore)</title>
+  <style>
+    html, body { margin: 0; padding: 0; }
+    #map { position: absolute; inset: 0; }
+    #toolbar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      display: flex;
+      gap: 6px;
+      background: rgba(30, 30, 30, 0.75);
+      padding: 8px;
+      border-radius: 6px;
+      font-family: sans-serif;
+    }
+    #toolbar button {
+      font-size: 13px;
+      padding: 5px 10px;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: white;
+    }
+    #toolbar button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    #toolbar button.active {
+      outline: 2px solid rgb(116, 207, 221);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="toolbar">
+    <button id="btn-select" class="active">Select</button>
+    <button id="btn-point">Create Point</button>
+    <button id="btn-line">Create Line</button>
+    <button id="btn-polygon">Create Polygon</button>
+    <button id="btn-edit" disabled>Edit Selected</button>
+  </div>
+  <script type="module" src="/src/bootstrap.ts"></script>
+</body>
+</html>

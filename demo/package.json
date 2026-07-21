@@ -1,0 +1,21 @@
+{
+  "name": "ria-3d-shape-editor-demo",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@luciad/ria": "^2026.0.9"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.0.12"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
+  }
+}

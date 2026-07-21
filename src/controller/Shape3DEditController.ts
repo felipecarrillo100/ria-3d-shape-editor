@@ -8,7 +8,7 @@ import {GeoCanvas} from "@luciad/ria/view/style/GeoCanvas.js";
 import {LabelCanvas} from "@luciad/ria/view/style/LabelCanvas.js";
 import {Point} from "@luciad/ria/shape/Point.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
-import {createPolyline} from "@luciad/ria/shape/ShapeFactory.js";
+import {createPolyline, createShapeList} from "@luciad/ria/shape/ShapeFactory.js";
 import {FeatureLayer} from "@luciad/ria/view/feature/FeatureLayer.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
@@ -30,7 +30,9 @@ import {
 } from "../handle/HandleInteractions.js";
 import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
 import {computePointHandlePositions} from "../handle/PointHandleLayout.js";
-import {distance} from "../math/Vector3Util.js";
+import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
+import {add, distance, normalize, scale, toPoint} from "../math/Vector3Util.js";
+import {formatLength, UomFamily} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
   CANCEL_HANDLE_FOCUSED_ICON_STYLE,
@@ -40,10 +42,14 @@ import {
   GUIDE_END_OCCLUDED_ICON_STYLE,
   GUIDE_LINE_STYLE,
   GUIDE_START_ICON_STYLE,
+  HEIGHT_DROP_LINE_OCCLUDED_STYLE,
+  HEIGHT_DROP_LINE_STYLE,
   HEIGHT_HANDLE_DEFAULT_ICON_STYLE,
   HEIGHT_HANDLE_FOCUSED_ICON_STYLE,
   MOVE_HANDLE_DEFAULT_ICON_STYLE,
   MOVE_HANDLE_FOCUSED_ICON_STYLE,
+  MOVE_PLANE_OCCLUDED_STYLE,
+  MOVE_PLANE_STYLE,
   PREVIEW_CLOSING_SEGMENT_STYLE,
   PREVIEW_SHAPE_STYLE,
   VERTEX_DEFAULT_ICON_STYLE,
@@ -63,13 +69,49 @@ import {
 } from "../events.js";
 
 const WGS_84 = getReference("CRS:84");
-const WGS84_TO_EPSG4978 = createTransformation(WGS_84, getReference("EPSG:4978"));
+const EPSG_4978 = getReference("EPSG:4978");
+const WGS84_TO_EPSG4978 = createTransformation(WGS_84, EPSG_4978);
 
 const DEFAULT_VERTEX_HIT_PIXEL_TOLERANCE = 12;
+const DEFAULT_UOM: UomFamily = "metric";
+const DEFAULT_SHOW_PLANE = false;
+const DEFAULT_SHOW_DROP_LINE = false;
+// Larger than PointHandleLayout.ts's own DEFAULT_HANDLE_OFFSET_FACTOR (0.04) - this plane is a
+// visible ground reference, not a small icon offset, so it needs to read clearly at a glance.
+const MOVE_PLANE_SIZE_FACTOR = 0.15;
+// 5 grid divisions on each side of the center, per feedback - same overall footprint as before.
+const MOVE_PLANE_GRID_DIVISIONS = 5;
+// Same scale as the plane above, for the same reason - stays visually proportional regardless of zoom.
+const HEIGHT_DROP_LINE_LENGTH_FACTOR = 0.15;
+// No CSS anywhere in this package styles ".ria-3d-shape-editor-label" - inlined here so the label
+// is legible over any background (sky, imagery, mesh) without requiring a consuming app to supply
+// its own stylesheet. The class name is kept too, so a consuming app can still override via CSS
+// specificity if it wants a different look.
+const LABEL_STYLE = "color:#fff;font-weight:600;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000;";
 
 export interface Shape3DEditControllerOptions {
+  /**
+   * If given, the controller starts directly in edit mode on this existing shape instead of
+   * creating a new one. Its type must match `shapeType`.
+   */
+  existingShape?: EditableShape;
   /** Pixel radius within which a click/hover counts as targeting a handle. Default 12. */
   vertexHitPixelTolerance?: number;
+  /** Unit family for the live drag-distance label, auto-scaling within it. Default "metric". */
+  uom?: UomFamily;
+  /**
+   * While dragging the horizontal (move) handle, draw a translucent reference plane at the
+   * frozen height, so it's visually obvious the drag is constrained to a flat surface. Default
+   * false.
+   */
+  showPlane?: boolean;
+  /**
+   * While dragging the height or free handle (both can change Z), draw a vertical line from the
+   * current position downward, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so the portion that
+   * passes into/behind terrain or a mesh shows distinctly - a cheap, always-correct way to notice
+   * "this has reached the ground/a building" without any raycasting. Default false.
+   */
+  showDropLine?: boolean;
 }
 
 /**
@@ -114,7 +156,11 @@ export class Shape3DEditController extends Controller {
   private readonly _strategy: ShapeEditStrategy;
   private readonly _targetReference: CoordinateReference;
   private readonly _eventedSupport: EventedSupport;
-  private readonly _vertexHitPixelTolerance: number;
+  // Not readonly - updateController() can change these on an already-constructed instance.
+  private _vertexHitPixelTolerance: number;
+  private _uom: UomFamily;
+  private _showPlane: boolean;
+  private _showDropLine: boolean;
 
   private _phase: Phase;
   private _shape: EditableShape | null;
@@ -141,15 +187,18 @@ export class Shape3DEditController extends Controller {
    * time; this controller does not otherwise interact with the layer (it does not add/remove
    * features, style anything on it, etc.).
    */
-  constructor(shapeType: SupportedShapeType, layer: FeatureLayer, existingShape?: EditableShape,
-              options?: Shape3DEditControllerOptions) {
+  constructor(shapeType: SupportedShapeType, layer: FeatureLayer, options?: Shape3DEditControllerOptions) {
     super();
     this._strategy = createShapeEditStrategy(shapeType);
     this._targetReference = layer.model.reference;
     this._vertexHitPixelTolerance = options?.vertexHitPixelTolerance ?? DEFAULT_VERTEX_HIT_PIXEL_TOLERANCE;
+    this._uom = options?.uom ?? DEFAULT_UOM;
+    this._showPlane = options?.showPlane ?? DEFAULT_SHOW_PLANE;
+    this._showDropLine = options?.showDropLine ?? DEFAULT_SHOW_DROP_LINE;
     this._eventedSupport = new EventedSupport(
         [SHAPE_CREATED_EVENT, SHAPE_CHANGED_EVENT, SHAPE_EDITING_FINISHED_EVENT], true);
 
+    const existingShape = options?.existingShape;
     if (existingShape) {
       if (existingShape.type !== shapeType) {
         throw new ProgrammingError(
@@ -165,6 +214,29 @@ export class Shape3DEditController extends Controller {
       this._originalShapeSnapshot = null;
       this._creationSession = new CreationSession(this._strategy, this._targetReference);
     }
+  }
+
+  /**
+   * Updates any subset of this controller's options on an already-constructed instance, without
+   * needing to tear it down and recreate it (which would lose any in-progress shape/session
+   * state). The motivating case is `uom`: a UI toggle switching units live, possibly mid-drag.
+   * None of these options interact with in-progress drag/shape state, so there's no
+   * session-corruption risk to guard against.
+   */
+  updateController(options: Partial<Shape3DEditControllerOptions>): void {
+    if (options.vertexHitPixelTolerance !== undefined) {
+      this._vertexHitPixelTolerance = options.vertexHitPixelTolerance;
+    }
+    if (options.uom !== undefined) {
+      this._uom = options.uom;
+    }
+    if (options.showPlane !== undefined) {
+      this._showPlane = options.showPlane;
+    }
+    if (options.showDropLine !== undefined) {
+      this._showDropLine = options.showDropLine;
+    }
+    this.invalidate();
   }
 
   get shape(): EditableShape | null {
@@ -643,6 +715,40 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawIcon(handle.currentWGS84, GUIDE_END_ICON_STYLE);
       geoCanvas.drawIcon(handle.currentWGS84, GUIDE_END_OCCLUDED_ICON_STYLE);
     }
+
+    // Centered on the live dragged position (not the drag's start), so the grid visually tracks
+    // the point as it slides. Only for the horizontal (move) handle - that's the one interaction
+    // this is meant to visually ground ("you're sliding along this flat surface").
+    if (this._showPlane && handle?.kind === "move" && handle.currentWGS84) {
+      const centerEpsg4978 = WGS84_TO_EPSG4978.transform(handle.currentWGS84);
+      const up = normalize(centerEpsg4978);
+      const size = distance(map.camera.eye, centerEpsg4978) * MOVE_PLANE_SIZE_FACTOR;
+      const gridLines = horizontalPlaneGridLines(centerEpsg4978, up, size, MOVE_PLANE_GRID_DIVISIONS)
+          .map(([a, b]) => createPolyline(EPSG_4978, [toPoint(EPSG_4978, a), toPoint(EPSG_4978, b)]));
+      const grid = createShapeList(EPSG_4978, gridLines);
+      geoCanvas.drawShape(grid, MOVE_PLANE_STYLE);
+      geoCanvas.drawShape(grid, MOVE_PLANE_OCCLUDED_STYLE);
+    }
+
+    // Anchored to the drag's start position, not the live dragged position - it stays planted
+    // where the vertex originally was, for the whole drag, unlike the yellow guide line (which
+    // tracks the live position). Along the drag's own already-correct true-vertical axis - no
+    // raycasting needed, and no computed ground intersection either: RIA's own depth test is what
+    // actually reveals "this has reached the ground/a building," via the OCCLUDED_ONLY portion of
+    // the line. Restricted to "height" only - "move" is about horizontal position with its own
+    // plane-based occlusion cue, and "free" is already continuously re-snapped to a surface, so a
+    // ground-line adds nothing.
+    if (this._showDropLine && handle?.dragStartWGS84 && handle.kind === "height") {
+      const topEpsg4978 = WGS84_TO_EPSG4978.transform(handle.dragStartWGS84);
+      const up = normalize(topEpsg4978);
+      // Length is fixed for the whole drag too - based on the same fixed top point, so it never
+      // changes frame to frame.
+      const dropLength = distance(map.camera.eye, topEpsg4978) * HEIGHT_DROP_LINE_LENGTH_FACTOR;
+      const bottomEpsg4978 = add(topEpsg4978, scale(up, -dropLength));
+      const dropLine = createPolyline(EPSG_4978, [toPoint(EPSG_4978, topEpsg4978), toPoint(EPSG_4978, bottomEpsg4978)]);
+      geoCanvas.drawShape(dropLine, HEIGHT_DROP_LINE_STYLE);
+      geoCanvas.drawShape(dropLine, HEIGHT_DROP_LINE_OCCLUDED_STYLE);
+    }
   }
 
   override onDrawLabel(labelCanvas: LabelCanvas): void {
@@ -653,13 +759,13 @@ export class Shape3DEditController extends Controller {
     let text: string;
     if (handle.kind === "height") {
       const diff = handle.currentWGS84.z - handle.dragStartWGS84.z;
-      text = `${diff >= 0 ? "+" : ""}${diff.toFixed(2)}m`;
+      text = `${diff >= 0 ? "+" : ""}${formatLength(diff, this._uom)}`;
     } else {
       const startEpsg4978 = WGS84_TO_EPSG4978.transform(handle.dragStartWGS84);
       const currentEpsg4978 = WGS84_TO_EPSG4978.transform(handle.currentWGS84);
-      text = `${distance(startEpsg4978, currentEpsg4978).toFixed(2)}m`;
+      text = formatLength(distance(startEpsg4978, currentEpsg4978), this._uom);
     }
-    labelCanvas.drawLabel(`<div class="ria-3d-shape-editor-label">${text}</div>`, handle.currentWGS84, {});
+    labelCanvas.drawLabel(`<div class="ria-3d-shape-editor-label" style="${LABEL_STYLE}">${text}</div>`, handle.currentWGS84, {});
   }
 
   // --- Events ---
