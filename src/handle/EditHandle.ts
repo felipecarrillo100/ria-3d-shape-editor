@@ -4,8 +4,10 @@
 import {Point} from "@luciad/ria/shape/Point.js";
 
 // "midpoint" only ever appears as a `_hoveredHandleKind` value (Shape3DEditController.ts) - a
-// midpoint marker is never itself the kind of a live EditHandle, since dragging one immediately
-// inserts a real vertex and continues as an ordinary "free" drag on that new vertex.
+// midpoint marker is never itself the kind of a live EditHandle. Dragging a selected midpoint's
+// handle either inserts a real vertex and continues as an ordinary "free"/"move"/"height" drag on
+// that new vertex, or - with Shift held - shifts the whole shape without ever inserting one; the
+// midpoint itself never becomes the handle's own kind either way.
 export type HandleKind = "free" | "move" | "height" | "finish" | "cancel" | "midpoint";
 
 /**
@@ -24,6 +26,11 @@ export class EditHandle {
   /** The vertex's most recently computed WGS84 position while dragging. */
   currentWGS84: Point | null = null;
 
+  /** True if Shift was held when this drag started - locked for the whole gesture. */
+  shiftWholeShape = false;
+  /** Every vertex's own WGS84 position at drag start - only populated when shiftWholeShape. */
+  allVerticesStartWGS84: Point[] | null = null;
+
   constructor(kind: HandleKind) {
     this.kind = kind;
   }
@@ -32,5 +39,7 @@ export class EditHandle {
     this.interactionFunction = null;
     this.dragStartWGS84 = null;
     this.currentWGS84 = null;
+    this.shiftWholeShape = false;
+    this.allVerticesStartWGS84 = null;
   }
 }

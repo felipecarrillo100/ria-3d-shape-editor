@@ -2,6 +2,7 @@ import {Controller} from "@luciad/ria/view/controller/Controller.js";
 import {WebGLMap} from "@luciad/ria/view/WebGLMap.js";
 import {GestureEvent} from "@luciad/ria/view/input/GestureEvent.js";
 import {GestureEventType} from "@luciad/ria/view/input/GestureEventType.js";
+import {ModifierType} from "@luciad/ria/view/input/ModifierType.js";
 import {KeyEvent} from "@luciad/ria/view/input/KeyEvent.js";
 import {EVENT_HANDLED, EVENT_IGNORED, HandleEventResult} from "@luciad/ria/view/controller/HandleEventResult.js";
 import {GeoCanvas} from "@luciad/ria/view/style/GeoCanvas.js";
@@ -32,7 +33,7 @@ import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
 import {computePointHandlePositions, PointHandlePositions} from "../handle/PointHandleLayout.js";
 import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js";
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
-import {add, distance, normalize, scale, toPoint} from "../math/Vector3Util.js";
+import {add, distance, normalize, scale, sub, toPoint} from "../math/Vector3Util.js";
 import {formatLength, UomFamily} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
@@ -47,12 +48,14 @@ import {
   HEIGHT_DROP_LINE_STYLE,
   HEIGHT_HANDLE_DEFAULT_ICON_STYLE,
   HEIGHT_HANDLE_FOCUSED_ICON_STYLE,
+  HEIGHT_HANDLE_SHIFT_ICON_STYLE,
   MIDPOINT_HOVERED_ICON_STYLE,
   MIDPOINT_HOVERED_OCCLUDED_ICON_STYLE,
   MIDPOINT_ICON_STYLE,
   MIDPOINT_OCCLUDED_ICON_STYLE,
   MOVE_HANDLE_DEFAULT_ICON_STYLE,
   MOVE_HANDLE_FOCUSED_ICON_STYLE,
+  MOVE_HANDLE_SHIFT_ICON_STYLE,
   MOVE_PLANE_OCCLUDED_STYLE,
   MOVE_PLANE_STYLE,
   PREVIEW_CLOSING_SEGMENT_STYLE,
@@ -76,6 +79,7 @@ import {
 const WGS_84 = getReference("CRS:84");
 const EPSG_4978 = getReference("EPSG:4978");
 const WGS84_TO_EPSG4978 = createTransformation(WGS_84, EPSG_4978);
+const EPSG4978_TO_WGS84 = createTransformation(EPSG_4978, WGS_84);
 
 const DEFAULT_VERTEX_HIT_PIXEL_TOLERANCE = 12;
 const DEFAULT_UOM: UomFamily = "metric";
@@ -177,6 +181,12 @@ export class Shape3DEditController extends Controller {
   private _hoveredSegmentIndex: number | null = null;
   private _hoveredHandleKind: HandleKind | null = null;
   private _activeHandle: EditHandle | null = null;
+  /**
+   * Whether Shift is currently held, tracked continuously on hover (not just at drag-start) so the
+   * move/height handle icons can grow as soon as Shift is pressed - a discoverability cue for
+   * "dragging this now shifts the whole shape," before the user ever starts dragging.
+   */
+  private _shiftHeld = false;
   /** Set right before `map.controller = null` by endEditing(); read once by onDeactivate. */
   private _pendingConfirmed = false;
   /**
@@ -553,7 +563,12 @@ export class Shape3DEditController extends Controller {
     if (this._activeHandle) {
       return EVENT_IGNORED;
     }
-    if (this.updateHoverState(map, event.viewPoint)) {
+    const hoverChanged = this.updateHoverState(map, event.viewPoint);
+    const shiftHeld = event.modifier === ModifierType.SHIFT;
+    if (shiftHeld !== this._shiftHeld) {
+      this._shiftHeld = shiftHeld;
+      this.invalidate();
+    } else if (hoverChanged) {
       this.invalidate();
     }
     return this._hoveredHandleKind !== null ? EVENT_HANDLED : EVENT_IGNORED;
@@ -624,27 +639,41 @@ export class Shape3DEditController extends Controller {
         return EVENT_HANDLED;
       }
 
-      let vertexIndex: number;
+      const kind = this._hoveredHandleKind;
+      // Shift never applies to "free" - that gesture was never part of this feature's scope, so a
+      // Shift+free drag behaves exactly as if Shift weren't held at all (including still
+      // promoting an active midpoint, same as any other non-Shift drag on one).
+      const shiftWholeShape = event.modifier === ModifierType.SHIFT && kind !== "free";
+
+      let vertexIndex: number | null;
+      let anchorPointInShapeRef: Point;
       if (this._activeSegmentIndex !== null) {
         if (this._hoveredSegmentIndex !== this._activeSegmentIndex) {
           // Only the active midpoint's own handles are draggable - same rule as a non-active
           // vertex just below.
           return EVENT_HANDLED;
         }
-        // Dragging one of the active midpoint's handles is what promotes it into a real,
-        // committed vertex, right here - before the drag continues exactly like an ordinary
-        // "free"/"move"/"height" drag on that new vertex, via the unmodified code below.
         const count = this._strategy.vertexCount(shape);
         const segmentIndex = this._activeSegmentIndex;
         const a = this._strategy.getVertex(shape, segmentIndex);
         const b = this._strategy.getVertex(shape, (segmentIndex + 1) % count);
         const midpointInMapRef = computeSegmentMidpointPosition(map, a, b);
-        const midpointInShapeRef = createTransformation(map.reference, shape.reference!).transform(midpointInMapRef);
-        vertexIndex = segmentIndex + 1;
-        this._strategy.insertVertex(shape, vertexIndex, midpointInShapeRef);
-        this._activeVertexIndex = vertexIndex;
-        this._activeSegmentIndex = null;
-        this.emitShapeChanged();
+        anchorPointInShapeRef = createTransformation(map.reference, shape.reference!).transform(midpointInMapRef);
+
+        if (shiftWholeShape) {
+          // Shift shifts the whole shape without ever promoting this midpoint into a real
+          // vertex - nothing about a uniform shift needs a new vertex here.
+          vertexIndex = null;
+        } else {
+          // Dragging one of the active midpoint's handles is what promotes it into a real,
+          // committed vertex, right here - before the drag continues exactly like an ordinary
+          // "free"/"move"/"height" drag on that new vertex, via the unmodified code below.
+          vertexIndex = segmentIndex + 1;
+          this._strategy.insertVertex(shape, vertexIndex, anchorPointInShapeRef);
+          this._activeVertexIndex = vertexIndex;
+          this._activeSegmentIndex = null;
+          this.emitShapeChanged();
+        }
       } else {
         if (this._hoveredVertexIndex !== this._activeVertexIndex) {
           // Only the active vertex's handles are draggable - a non-active vertex's plain marker
@@ -653,27 +682,61 @@ export class Shape3DEditController extends Controller {
           return EVENT_HANDLED;
         }
         vertexIndex = this._hoveredVertexIndex!;
+        anchorPointInShapeRef = this._strategy.getVertex(shape, vertexIndex);
       }
 
-      const kind = this._hoveredHandleKind;
       const handle = new EditHandle(kind);
       handle.vertexIndex = vertexIndex;
       handle.focused = true;
       this._activeHandle = handle;
 
-      const vertexPoint = this._strategy.getVertex(shape, handle.vertexIndex);
       handle.interactionFunction =
-          kind === "height" ? verticalMovePointInteraction(map, event.viewPoint, vertexPoint) :
-          kind === "move" ? horizontalMovePointInteraction(map, event.viewPoint, vertexPoint) :
-          freeMovePointInteraction(map, event.viewPoint, vertexPoint);
-      handle.dragStartWGS84 = createTransformation(vertexPoint.reference!, WGS_84).transform(vertexPoint).copy();
+          kind === "height" ? verticalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
+          kind === "move" ? horizontalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
+          freeMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef);
+      handle.dragStartWGS84 =
+          createTransformation(anchorPointInShapeRef.reference!, WGS_84).transform(anchorPointInShapeRef).copy();
+
+      if (shiftWholeShape) {
+        handle.shiftWholeShape = true;
+        const count = this._strategy.vertexCount(shape);
+        handle.allVerticesStartWGS84 = [];
+        for (let i = 0; i < count; i++) {
+          const vertex = this._strategy.getVertex(shape, i);
+          handle.allVerticesStartWGS84.push(createTransformation(vertex.reference!, WGS_84).transform(vertex).copy());
+        }
+      }
     }
 
     const handle = this._activeHandle;
     const resultWGS84 = handle.interactionFunction!(event.viewPoint);
     handle.currentWGS84 = resultWGS84.copy();
-    const resultInShapeRef = createTransformation(WGS_84, shape.reference!).transform(resultWGS84);
-    this._strategy.moveVertex(shape, handle.vertexIndex!, resultInShapeRef);
+
+    if (handle.shiftWholeShape && handle.allVerticesStartWGS84) {
+      if (handle.kind === "height") {
+        const heightDelta = resultWGS84.z - handle.dragStartWGS84!.z;
+        handle.allVerticesStartWGS84.forEach((start, i) => {
+          const updated = start.copy();
+          updated.z += heightDelta;
+          this._strategy.moveVertex(shape, i, createTransformation(WGS_84, shape.reference!).transform(updated));
+        });
+      } else {
+        // "move" - the delta must be a Cartesian vector (EPSG:4978), not a raw WGS84 lon/lat
+        // difference: degrees-per-meter-of-longitude varies by latitude, so adding a raw lon/lat
+        // delta uniformly would NOT be a uniform real-world shift (the same reason
+        // ShapeEditStrategy.translateWholeShape isn't used here either).
+        const startEpsg4978 = WGS84_TO_EPSG4978.transform(handle.dragStartWGS84!);
+        const deltaEpsg4978 = sub(WGS84_TO_EPSG4978.transform(resultWGS84), startEpsg4978);
+        handle.allVerticesStartWGS84.forEach((start, i) => {
+          const updatedEpsg4978 = add(WGS84_TO_EPSG4978.transform(start), deltaEpsg4978);
+          const updatedWGS84 = EPSG4978_TO_WGS84.transform(toPoint(EPSG_4978, updatedEpsg4978));
+          this._strategy.moveVertex(shape, i, createTransformation(WGS_84, shape.reference!).transform(updatedWGS84));
+        });
+      }
+    } else {
+      const resultInShapeRef = createTransformation(WGS_84, shape.reference!).transform(resultWGS84);
+      this._strategy.moveVertex(shape, handle.vertexIndex!, resultInShapeRef);
+    }
     this.emitShapeChanged();
     this.invalidate();
     return EVENT_HANDLED;
@@ -769,8 +832,13 @@ export class Shape3DEditController extends Controller {
     }
   }
 
-  /** Draws the free/move/height/finish/cancel handle set at `positions` - shared by the active vertex and the active midpoint, the only two things that ever get the full set. */
-  private drawFullHandleSet(geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null): void {
+  /**
+   * Draws the free/move/height/finish/cancel handle set at `positions` - shared by the active
+   * vertex and the active midpoint, the only two things that ever get the full set. `shiftHeld`
+   * only affects the move/height icons' size, independent of `activeKind`'s color - see the new
+   * `*_SHIFT_ICON_STYLE` constants.
+   */
+  private drawFullHandleSet(geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null, shiftHeld: boolean): void {
     if (activeKind === "free") {
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_ICON_STYLE);
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_OCCLUDED_ICON_STYLE);
@@ -779,10 +847,12 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_OCCLUDED_ICON_STYLE);
     }
     if (positions.move) {
-      geoCanvas.drawIcon(positions.move, activeKind === "move" ? MOVE_HANDLE_FOCUSED_ICON_STYLE : MOVE_HANDLE_DEFAULT_ICON_STYLE);
+      geoCanvas.drawIcon(positions.move, shiftHeld ? MOVE_HANDLE_SHIFT_ICON_STYLE :
+          activeKind === "move" ? MOVE_HANDLE_FOCUSED_ICON_STYLE : MOVE_HANDLE_DEFAULT_ICON_STYLE);
     }
     if (positions.height) {
-      geoCanvas.drawIcon(positions.height, activeKind === "height" ? HEIGHT_HANDLE_FOCUSED_ICON_STYLE : HEIGHT_HANDLE_DEFAULT_ICON_STYLE);
+      geoCanvas.drawIcon(positions.height, shiftHeld ? HEIGHT_HANDLE_SHIFT_ICON_STYLE :
+          activeKind === "height" ? HEIGHT_HANDLE_FOCUSED_ICON_STYLE : HEIGHT_HANDLE_DEFAULT_ICON_STYLE);
     }
     if (positions.finish) {
       geoCanvas.drawIcon(positions.finish, activeKind === "finish" ? FINISH_HANDLE_FOCUSED_ICON_STYLE : FINISH_HANDLE_DEFAULT_ICON_STYLE);
@@ -819,7 +889,7 @@ export class Shape3DEditController extends Controller {
           i === this._activeHandle?.vertexIndex ? this._activeHandle!.kind :
           i === this._hoveredVertexIndex ? this._hoveredHandleKind :
           null;
-      this.drawFullHandleSet(geoCanvas, positions, activeKind);
+      this.drawFullHandleSet(geoCanvas, positions, activeKind, this._shiftHeld);
     }
 
     // Virtual per-segment midpoint markers - recomputed live from the current vertex list every
@@ -842,8 +912,16 @@ export class Shape3DEditController extends Controller {
       }
 
       const positions = computePointHandlePositions(map, midpoint);
-      const activeKind: HandleKind | null = this._hoveredSegmentIndex === i ? this._hoveredHandleKind : null;
-      this.drawFullHandleSet(geoCanvas, positions, activeKind);
+      // An in-progress Shift+midpoint drag keeps _activeSegmentIndex set for the whole gesture
+      // (never promoted/cleared, unlike the normal path) - recognize that case too, so the
+      // dragged handle keeps its focused color for the whole drag, not just while the mouse
+      // happens to sit exactly on the hover pixel.
+      const activeKind: HandleKind | null =
+          this._activeHandle && this._activeHandle.vertexIndex === null && this._activeSegmentIndex === i
+              ? this._activeHandle.kind :
+          this._hoveredSegmentIndex === i ? this._hoveredHandleKind :
+          null;
+      this.drawFullHandleSet(geoCanvas, positions, activeKind, this._shiftHeld);
     }
 
     const handle = this._activeHandle;

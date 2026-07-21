@@ -196,6 +196,26 @@ export const HEIGHT_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
+// Same size as *_FOCUSED (bigger, signals "dragging this now does something different"), but built
+// from the plain MOVE_COLOR/HEIGHT_COLOR rather than FOCUSED_COLOR - size (driven by whether Shift
+// is held) and color (driven by hover/drag state) stay independent, so a shift-enlarged handle you
+// aren't otherwise hovering doesn't look identical to one you are.
+export const MOVE_HANDLE_SHIFT_ICON_STYLE: IconStyle = {
+  url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const HEIGHT_HANDLE_SHIFT_ICON_STYLE: IconStyle = {
+  url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
 export const FINISH_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
   url: createCheckmarkIconImage(FINISH_COLOR, HANDLE_BG, 8),
   width: "22px",
