@@ -33,7 +33,7 @@ import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
 import {computePointHandlePositions, PointHandlePositions} from "../handle/PointHandleLayout.js";
 import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js";
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
-import {add, distance, normalize, scale, sub, toPoint} from "../math/Vector3Util.js";
+import {add, distance, normalize, sub, toPoint} from "../math/Vector3Util.js";
 import {formatLength, UomFamily} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
@@ -90,8 +90,6 @@ const DEFAULT_SHOW_DROP_LINE = false;
 const MOVE_PLANE_SIZE_FACTOR = 0.15;
 // 5 grid divisions on each side of the center, per feedback - same overall footprint as before.
 const MOVE_PLANE_GRID_DIVISIONS = 5;
-// Same scale as the plane above, for the same reason - stays visually proportional regardless of zoom.
-const HEIGHT_DROP_LINE_LENGTH_FACTOR = 0.15;
 // No CSS anywhere in this package styles ".ria-3d-shape-editor-label" - inlined here so the label
 // is legible over any background (sky, imagery, mesh) without requiring a consuming app to supply
 // its own stylesheet. The class name is kept too, so a consuming app can still override via CSS
@@ -115,10 +113,11 @@ export interface Shape3DEditControllerOptions {
    */
   showPlane?: boolean;
   /**
-   * While dragging the height or free handle (both can change Z), draw a vertical line from the
-   * current position downward, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so the portion that
+   * While dragging the height handle, draw a vertical line from the drag's start position all the
+   * way down to Earth's center, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so the portion that
    * passes into/behind terrain or a mesh shows distinctly - a cheap, always-correct way to notice
-   * "this has reached the ground/a building" without any raycasting. Default false.
+   * "this has reached the ground/a building" without any raycasting, regardless of how high above
+   * the surface the vertex is or how zoomed in/out the camera is. Default false.
    */
   showDropLine?: boolean;
 }
@@ -949,20 +948,20 @@ export class Shape3DEditController extends Controller {
 
     // Anchored to the drag's start position, not the live dragged position - it stays planted
     // where the vertex originally was, for the whole drag, unlike the yellow guide line (which
-    // tracks the live position). Along the drag's own already-correct true-vertical axis - no
+    // tracks the live position). Runs all the way to the EPSG:4978 origin - Earth's center - since
+    // that's where the drag's own true-vertical axis (the point's own ECEF vector) leads; no
     // raycasting needed, and no computed ground intersection either: RIA's own depth test is what
     // actually reveals "this has reached the ground/a building," via the OCCLUDED_ONLY portion of
-    // the line. Restricted to "height" only - "move" is about horizontal position with its own
-    // plane-based occlusion cue, and "free" is already continuously re-snapped to a surface, so a
-    // ground-line adds nothing.
+    // the line. Going the full distance (rather than some camera- or scene-relative fraction of it)
+    // guarantees the line always crosses whatever terrain/mesh is beneath the vertex, no matter how
+    // high above the surface it's dragged or how zoomed in/out the camera is. Restricted to
+    // "height" only - "move" is about horizontal position with its own plane-based occlusion cue,
+    // and "free" is already continuously re-snapped to a surface, so a ground-line adds nothing.
     if (this._showDropLine && handle?.dragStartWGS84 && handle.kind === "height") {
       const topEpsg4978 = WGS84_TO_EPSG4978.transform(handle.dragStartWGS84);
-      const up = normalize(topEpsg4978);
-      // Length is fixed for the whole drag too - based on the same fixed top point, so it never
-      // changes frame to frame.
-      const dropLength = distance(map.camera.eye, topEpsg4978) * HEIGHT_DROP_LINE_LENGTH_FACTOR;
-      const bottomEpsg4978 = add(topEpsg4978, scale(up, -dropLength));
-      const dropLine = createPolyline(EPSG_4978, [toPoint(EPSG_4978, topEpsg4978), toPoint(EPSG_4978, bottomEpsg4978)]);
+      const earthCenterEpsg4978 = {x: 0, y: 0, z: 0};
+      const dropLine = createPolyline(EPSG_4978,
+          [toPoint(EPSG_4978, topEpsg4978), toPoint(EPSG_4978, earthCenterEpsg4978)]);
       geoCanvas.drawShape(dropLine, HEIGHT_DROP_LINE_STYLE);
       geoCanvas.drawShape(dropLine, HEIGHT_DROP_LINE_OCCLUDED_STYLE);
     }

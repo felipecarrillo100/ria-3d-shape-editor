@@ -83,7 +83,7 @@ function startEdit(feature: Feature): void {
   if (!shape) return
   const shapeType = shape.type as SupportedShapeType
   setEditedObject(layer, feature)
-  const ctrl = new Shape3DEditController(shapeType, layer, { existingShape: shape as EditableShape })
+  const ctrl = new Shape3DEditController(shapeType, layer, { existingShape: shape as EditableShape,  showPlane: true, showDropLine: true} )
   ctrl.on('ShapeEditingFinished', ({ shape: editedShape, confirmed }) => {
     if (!confirmed) {
       setEditedObject(layer, null)
