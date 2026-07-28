@@ -202,8 +202,9 @@ export interface Shape3DEditControllerOptions {
  * "remove" handle (top-left, same horizontal offset as "move" mirrored to the other side, same
  * vertical offset as "height") removes the vertex outright (also reachable via double-click/
  * double-tap anywhere near a vertex - see removeVertexNear); a click-only "shiftToggle" handle
- * (the exact mirror of "move," on the opposite side) toggles whole-shape move/height mode; and a
- * click-only pair below the vertex - a checkmark ("finish", confirm and end editing, down-right)
+ * (the exact mirror of "move," on the opposite side) toggles whole-shape mode, which applies to
+ * "free"/"move"/"height" alike - every other vertex is rigidly carried along by whichever one is
+ * dragged; and a click-only pair below the vertex - a checkmark ("finish", confirm and end editing, down-right)
  * and an X ("cancel", discard and end editing, down-left), grouped together and deliberately
  * separated from the shape-adjusting handles above/beside the vertex. The move/height/finish/
  * cancel/shiftToggle/remove handles only appear on a 3D (EPSG:4978) map - see
@@ -865,10 +866,15 @@ export class Shape3DEditController extends Controller {
       }
 
       const kind = this._hoveredHandleKind;
-      // Whole-shape mode never applies to "free" - that gesture was never part of this feature's
-      // scope, so a "free" drag behaves the same whether whole-shape mode is toggled on or not
-      // (including still promoting an active midpoint, same as any other drag on one).
-      const shiftWholeShape = this._shiftWholeShapeToggled && kind !== "free";
+      // "free" participates in whole-shape mode too: the dragged vertex keeps conforming to
+      // whatever surface is under the cursor (freeMovePointInteraction, unchanged), and every
+      // other vertex is rigidly carried along by that same 3D delta - not independently re-draped
+      // onto its own local terrain. The delta-application block below already computes a full 3D
+      // ECEF delta (not just horizontal) for anything that isn't "height", so no extra math is
+      // needed here to support this. Same consequence as move/height when armed: dragging a
+      // not-yet-promoted midpoint shifts the whole shape without ever promoting it into a real
+      // vertex, since the vertex set itself isn't changing.
+      const shiftWholeShape = this._shiftWholeShapeToggled;
 
       let vertexIndex: number | null;
       let anchorPointInShapeRef: Point;
