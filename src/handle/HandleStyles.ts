@@ -36,7 +36,7 @@ const HEIGHT_COLOR = "rgb(255,150,60)";
 const DROP_LINE_COLOR = "rgb(60,140,240)";
 const FINISH_COLOR = "rgb(80,150,255)";
 const CANCEL_COLOR = "rgb(230,80,80)";
-const HANDLE_BG = "rgba(30,30,30,0.55)";
+const HANDLE_BG = "rgb(10,10,10)";
 // Deliberately more saturated than HEIGHT_COLOR above, so an occluded height handle still reads
 // as a clear, distinct warning rather than just "still kind of orange."
 const OCCLUDED_COLOR = "rgb(255,102,0)";
@@ -51,17 +51,32 @@ const OCCLUDED_STROKE = "rgb(40,20,10)";
 const SHAPE_BODY_Z_ORDER = -1;
 
 // Occlusion-aware icons are drawn TWICE, back to back, at the same position - once with
-// occlusionMode: VISIBLE_ONLY (normal color, shown only where nothing obscures it) and once with
-// occlusionMode: OCCLUDED_ONLY (OCCLUDED_COLOR, shown only where something does) - so LuciadRIA's
-// own depth test picks whichever actually applies each frame, with no manual raycasting needed.
-// This is the exact idiom LuciadRIA's own toolbox uses for the same purpose (confirmed directly:
+// occlusionMode: VISIBLE_ONLY and once with occlusionMode: OCCLUDED_ONLY - so LuciadRIA's own
+// depth test picks whichever actually applies each frame, with no manual raycasting needed. This
+// is the exact idiom LuciadRIA's own toolbox uses for the same purpose (confirmed directly:
 // @luciad/ria-toolbox-ria/geolocation/HandleStyles.ts's MAIN_STROKE_STYLE/MAIN_STROKE_OCCLUDED_STYLE
-// pair, drawn together in AltitudeHandleSupport.ts's drawBody). Applied to the vertex/free handle,
-// the drag-position ("current") diamond, and the shape's own body/closing-segment preview (see
-// PREVIEW_SHAPE_STYLE/PREVIEW_CLOSING_SEGMENT_STYLE below) - all things that represent the shape's
-// real position or geometry. Move/height/finish/cancel/drag-start all keep occlusionMode:
-// ALWAYS_VISIBLE with no occluded variant - they're fixed-offset UI affordances, not the shape's
-// own geometry, so an occlusion cue on them isn't wanted.
+// pair, drawn together in AltitudeHandleSupport.ts's drawBody).
+//
+// For the vertex/free handle, the drag-position ("current") diamond, and the shape's own
+// body/closing-segment preview (see PREVIEW_SHAPE_STYLE/PREVIEW_CLOSING_SEGMENT_STYLE below), the
+// OCCLUDED_ONLY variant also switches to OCCLUDED_COLOR/OCCLUDED_STROKE - these represent the
+// shape's real position/geometry, so recoloring when hidden behind terrain is a meaningful cue.
+//
+// The move/height/finish/cancel handle icons ALSO use this VISIBLE_ONLY/OCCLUDED_ONLY split, but
+// their OCCLUDED_ONLY variant deliberately uses the SAME color as its VISIBLE_ONLY counterpart, not
+// OCCLUDED_COLOR - they're temporary drawing aids with no corresponding real point in the edited
+// shape, so unlike everything else above, they must always render in one single, unchanging color
+// regardless of occlusion. The split exists purely as a stacking mechanism, not a visual cue: with
+// the shape body given a lower zOrder (SHAPE_BODY_Z_ORDER) so handles paint above it, an
+// ALWAYS_VISIBLE icon and a VISIBLE_ONLY/OCCLUDED_ONLY shape don't reliably respect that zOrder
+// against each other (empirically confirmed - these icons kept rendering underneath the shape body
+// despite their higher zOrder, while still ALWAYS_VISIBLE). Matching the shape body's own
+// VISIBLE_ONLY/OCCLUDED_ONLY category is the one configuration proven to respect zOrder here, since
+// it's exactly what already made the vertex icons above stack correctly.
+//
+// Only drag-start (the small diamond marking a drag's origin point) still keeps occlusionMode:
+// ALWAYS_VISIBLE with no occluded variant at all - it's never drawn anywhere near the shape body,
+// so this stacking issue doesn't apply to it.
 
 export const VERTEX_DEFAULT_ICON_STYLE: IconStyle = {
   url: createCircleIconImage(VERTEX_COLOR, VERTEX_STROKE, 5),
@@ -177,7 +192,15 @@ export const MOVE_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
   url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 8),
   width: "22px",
   height: "22px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const MOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -185,7 +208,15 @@ export const MOVE_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
   url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const MOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -193,7 +224,15 @@ export const HEIGHT_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
   url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 8),
   width: "22px",
   height: "22px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const HEIGHT_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -201,7 +240,15 @@ export const HEIGHT_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
   url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const HEIGHT_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -213,7 +260,15 @@ export const MOVE_HANDLE_SHIFT_ICON_STYLE: IconStyle = {
   url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const MOVE_HANDLE_SHIFT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createHorizontalArrowIconImage(MOVE_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -221,7 +276,15 @@ export const HEIGHT_HANDLE_SHIFT_ICON_STYLE: IconStyle = {
   url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const HEIGHT_HANDLE_SHIFT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createVerticalArrowIconImage(HEIGHT_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -229,7 +292,15 @@ export const FINISH_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
   url: createCheckmarkIconImage(FINISH_COLOR, HANDLE_BG, 8),
   width: "22px",
   height: "22px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const FINISH_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createCheckmarkIconImage(FINISH_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -237,7 +308,15 @@ export const FINISH_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
   url: createCheckmarkIconImage(FINISH_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const FINISH_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createCheckmarkIconImage(FINISH_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -245,7 +324,15 @@ export const CANCEL_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
   url: createXMarkIconImage(CANCEL_COLOR, HANDLE_BG, 8),
   width: "22px",
   height: "22px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createXMarkIconImage(CANCEL_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -253,7 +340,15 @@ export const CANCEL_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
   url: createXMarkIconImage(CANCEL_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createXMarkIconImage(CANCEL_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 

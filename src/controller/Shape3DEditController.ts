@@ -37,25 +37,35 @@ import {add, distance, normalize, sub, toPoint} from "../math/Vector3Util.js";
 import {formatLength, UomFamily} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
+  CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   CANCEL_HANDLE_FOCUSED_ICON_STYLE,
+  CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
   DROP_LINE_OCCLUDED_STYLE,
   DROP_LINE_STYLE,
   FINISH_HANDLE_DEFAULT_ICON_STYLE,
+  FINISH_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   FINISH_HANDLE_FOCUSED_ICON_STYLE,
+  FINISH_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
   GUIDE_END_ICON_STYLE,
   GUIDE_END_OCCLUDED_ICON_STYLE,
   GUIDE_LINE_STYLE,
   GUIDE_START_ICON_STYLE,
   HEIGHT_HANDLE_DEFAULT_ICON_STYLE,
+  HEIGHT_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   HEIGHT_HANDLE_FOCUSED_ICON_STYLE,
+  HEIGHT_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
   HEIGHT_HANDLE_SHIFT_ICON_STYLE,
+  HEIGHT_HANDLE_SHIFT_OCCLUDED_ICON_STYLE,
   MIDPOINT_HOVERED_ICON_STYLE,
   MIDPOINT_HOVERED_OCCLUDED_ICON_STYLE,
   MIDPOINT_ICON_STYLE,
   MIDPOINT_OCCLUDED_ICON_STYLE,
   MOVE_HANDLE_DEFAULT_ICON_STYLE,
+  MOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   MOVE_HANDLE_FOCUSED_ICON_STYLE,
+  MOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
   MOVE_HANDLE_SHIFT_ICON_STYLE,
+  MOVE_HANDLE_SHIFT_OCCLUDED_ICON_STYLE,
   MOVE_PLANE_OCCLUDED_STYLE,
   MOVE_PLANE_STYLE,
   PREVIEW_CLOSING_SEGMENT_OCCLUDED_STYLE,
@@ -191,6 +201,16 @@ export class Shape3DEditController extends Controller {
   private _shiftHeld = false;
   /** Set right before `map.controller = null` by endEditing(); read once by onDeactivate. */
   private _pendingConfirmed = false;
+  /**
+   * Subscribed in onActivate, removed in onDeactivate - without this, onDraw's output is cached by
+   * the map and handle icon positions only recompute once a gesture routed through this controller
+   * ends, so panning/orbiting the camera (handled entirely by the map's own navigation, not this
+   * controller) would leave the handles visually frozen mid-drag and only "snap" into place once
+   * the drag stops. MapChange fires once per rendered frame, so invalidating on every firing keeps
+   * onDraw (and therefore the handle positions, already computed fresh from the live camera every
+   * call) in sync throughout the whole gesture, not just at its end.
+   */
+  private _mapChangeHandle: Handle | null = null;
   /**
    * The one vertex (of a possibly-many-vertex LineString/Polygon) that currently gets the full
    * handle set (free/move/height/finish/cancel) - every other vertex draws only a plain,
@@ -344,6 +364,7 @@ export class Shape3DEditController extends Controller {
 
   override onActivate(map: WebGLMap): void {
     super.onActivate(map);
+    this._mapChangeHandle = map.on("MapChange", () => this.invalidate());
   }
 
   override onDeactivate(map: WebGLMap): Promise<void> | void {
@@ -351,6 +372,8 @@ export class Shape3DEditController extends Controller {
       this._eventedSupport.emit(SHAPE_EDITING_FINISHED_EVENT,
           {shape: this._shape, confirmed: this._pendingConfirmed} as ShapeEditingFinishedEvent);
     }
+    this._mapChangeHandle?.remove();
+    this._mapChangeHandle = null;
     this._activeHandle = null;
     this._hoveredVertexIndex = null;
     this._hoveredHandleKind = null;
@@ -852,18 +875,32 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_OCCLUDED_ICON_STYLE);
     }
     if (positions.move) {
-      geoCanvas.drawIcon(positions.move, shiftHeld ? MOVE_HANDLE_SHIFT_ICON_STYLE :
-          activeKind === "move" ? MOVE_HANDLE_FOCUSED_ICON_STYLE : MOVE_HANDLE_DEFAULT_ICON_STYLE);
+      const [style, occludedStyle] = shiftHeld ? [MOVE_HANDLE_SHIFT_ICON_STYLE, MOVE_HANDLE_SHIFT_OCCLUDED_ICON_STYLE] :
+          activeKind === "move" ? [MOVE_HANDLE_FOCUSED_ICON_STYLE, MOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
+          [MOVE_HANDLE_DEFAULT_ICON_STYLE, MOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
+      geoCanvas.drawIcon(positions.move, style);
+      geoCanvas.drawIcon(positions.move, occludedStyle);
     }
     if (positions.height) {
-      geoCanvas.drawIcon(positions.height, shiftHeld ? HEIGHT_HANDLE_SHIFT_ICON_STYLE :
-          activeKind === "height" ? HEIGHT_HANDLE_FOCUSED_ICON_STYLE : HEIGHT_HANDLE_DEFAULT_ICON_STYLE);
+      const [style, occludedStyle] = shiftHeld ? [HEIGHT_HANDLE_SHIFT_ICON_STYLE, HEIGHT_HANDLE_SHIFT_OCCLUDED_ICON_STYLE] :
+          activeKind === "height" ? [HEIGHT_HANDLE_FOCUSED_ICON_STYLE, HEIGHT_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
+          [HEIGHT_HANDLE_DEFAULT_ICON_STYLE, HEIGHT_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
+      geoCanvas.drawIcon(positions.height, style);
+      geoCanvas.drawIcon(positions.height, occludedStyle);
     }
     if (positions.finish) {
-      geoCanvas.drawIcon(positions.finish, activeKind === "finish" ? FINISH_HANDLE_FOCUSED_ICON_STYLE : FINISH_HANDLE_DEFAULT_ICON_STYLE);
+      const [style, occludedStyle] = activeKind === "finish" ?
+          [FINISH_HANDLE_FOCUSED_ICON_STYLE, FINISH_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
+          [FINISH_HANDLE_DEFAULT_ICON_STYLE, FINISH_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
+      geoCanvas.drawIcon(positions.finish, style);
+      geoCanvas.drawIcon(positions.finish, occludedStyle);
     }
     if (positions.cancel) {
-      geoCanvas.drawIcon(positions.cancel, activeKind === "cancel" ? CANCEL_HANDLE_FOCUSED_ICON_STYLE : CANCEL_HANDLE_DEFAULT_ICON_STYLE);
+      const [style, occludedStyle] = activeKind === "cancel" ?
+          [CANCEL_HANDLE_FOCUSED_ICON_STYLE, CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
+          [CANCEL_HANDLE_DEFAULT_ICON_STYLE, CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
+      geoCanvas.drawIcon(positions.cancel, style);
+      geoCanvas.drawIcon(positions.cancel, occludedStyle);
     }
   }
 
