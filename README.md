@@ -14,7 +14,7 @@ Works identically with mouse and touch input, with no separate code path for eit
 npm install ria-3d-shape-editor
 ```
 
-Peer dependency: `@luciad/ria >=2024.1`.
+Compatible with `@luciad/ria` 2025.0 or higher.
 
 ## Usage
 
