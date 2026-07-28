@@ -8,7 +8,7 @@ import {GeoCanvas} from "@luciad/ria/view/style/GeoCanvas.js";
 import {LabelCanvas} from "@luciad/ria/view/style/LabelCanvas.js";
 import {Point} from "@luciad/ria/shape/Point.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
-import {createPoint, createPolyline, createShapeList} from "@luciad/ria/shape/ShapeFactory.js";
+import {createArcBand, createExtrudedShape, createPoint, createPolyline, createShapeList} from "@luciad/ria/shape/ShapeFactory.js";
 import {FeatureLayer} from "@luciad/ria/view/feature/FeatureLayer.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
@@ -25,6 +25,7 @@ import {Phase} from "./Phase.js";
 import {nextActiveVertexIndex} from "./nextActiveVertexIndex.js";
 import {EditHandle, HandleKind} from "../handle/EditHandle.js";
 import {
+  azimuthToGroundProjectedPoint,
   freeMovePointInteraction,
   horizontalMovePointInteraction,
   horizontalRotateAzimuthInteraction,
@@ -80,6 +81,8 @@ import {
   REMOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   REMOVE_HANDLE_FOCUSED_ICON_STYLE,
   REMOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
+  ROTATE_ARC_BAND_OCCLUDED_STYLE,
+  ROTATE_ARC_BAND_STYLE,
   ROTATE_HANDLE_DEFAULT_ICON_STYLE,
   ROTATE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   ROTATE_HANDLE_FOCUSED_ICON_STYLE,
@@ -941,18 +944,22 @@ export class Shape3DEditController extends Controller {
         this.vibrate(HAPTIC_PULSE_MS);
       }
 
+      handle.dragStartWGS84 =
+          createTransformation(anchorPointInShapeRef.reference!, WGS_84).transform(anchorPointInShapeRef).copy();
+
       if (kind === "rotate") {
         // Rotate never produces a single evolving position (the pivot itself never moves), so it
         // doesn't fit interactionFunction's Point-returning signature - it gets its own function.
         handle.rotationInteractionFunction = horizontalRotateAzimuthInteraction(map, event.viewPoint, anchorPointInShapeRef);
+        // Captured once, independently of the interaction function above, so the rotate-arc
+        // visual's own "start" edge (drawn in drawEditHandles) has a fixed reference to draw from.
+        handle.rotationStartAzimuth = azimuthToGroundProjectedPoint(map, event.viewPoint, handle.dragStartWGS84);
       } else {
         handle.interactionFunction =
             kind === "height" ? verticalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
             kind === "move" ? horizontalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
             freeMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef);
       }
-      handle.dragStartWGS84 =
-          createTransformation(anchorPointInShapeRef.reference!, WGS_84).transform(anchorPointInShapeRef).copy();
 
       if (shiftWholeShape) {
         handle.shiftWholeShape = true;
@@ -968,7 +975,19 @@ export class Shape3DEditController extends Controller {
     const handle = this._activeHandle;
 
     if (handle.kind === "rotate") {
-      const deltaAzimuth = handle.rotationInteractionFunction!(event.viewPoint);
+      const rawDeltaAzimuth = handle.rotationInteractionFunction!(event.viewPoint);
+      // horizontalRotateAzimuthInteraction always returns a value in (-180, 180], so a genuine
+      // continuous sweep across that boundary would otherwise visually jump from one side to the
+      // other every frame - most noticeably in the arc-band and label below, though the rotation
+      // itself is unaffected either way (azimuth is inherently mod 360). Detect the tell-tale sign
+      // of a wrap (the sign flipped and the apparent frame-to-frame jump is implausibly large) and
+      // add/subtract a full turn to keep the value continuous - the same heuristic the toolbox's
+      // own RotateHandleSupport.update() uses (inspired by, not copied from).
+      const previousDeltaAzimuth = handle.rotationDeltaDegrees;
+      const deltaAzimuth = previousDeltaAzimuth !== null &&
+          rawDeltaAzimuth * previousDeltaAzimuth < 0 && Math.abs(rawDeltaAzimuth - previousDeltaAzimuth) > 180
+          ? rawDeltaAzimuth + (rawDeltaAzimuth < 0 ? 360 : -360)
+          : rawDeltaAzimuth;
       handle.rotationDeltaDegrees = deltaAzimuth;
       // Always rotate the pristine drag-start positions by the total delta-from-start, not the
       // shape's already-mutated live positions by this frame's delta - otherwise every frame would
@@ -1362,17 +1381,21 @@ export class Shape3DEditController extends Controller {
     // Anchored to the drag's start position for "height" (X/Y is frozen there, so the start
     // position is already the right spot) but to the live dragged position for "move" (X/Y is
     // exactly what's changing, so anchoring to the start would leave the line stuck where the drag
-    // began) - the same live anchor the reference-plane grid above already uses. Either way, the
-    // line runs all the way to the EPSG:4978 origin - Earth's center - since that's where the
-    // anchor's own true-vertical axis (its own ECEF vector) leads; no raycasting needed, and no
-    // computed ground intersection either: RIA's own depth test is what actually reveals "this has
-    // reached the ground/a building," via the OCCLUDED_ONLY portion of the line. Going the full
-    // distance (rather than some camera- or scene-relative fraction of it) guarantees the line
-    // always crosses whatever terrain/mesh is beneath the vertex, no matter how high above the
-    // surface it's dragged or how zoomed in/out the camera is. "free" stays excluded - it's already
-    // continuously re-snapped to a surface, so a ground-line adds nothing there.
+    // began) - the same live anchor the reference-plane grid above already uses. "rotate" anchors
+    // to its own dragStartWGS84 too - unlike height/move, that's the pivot's fixed position for the
+    // whole gesture (the pivot never moves), and this line is quite literally the rotation axis
+    // there, not just a depth cue. Either way, the line runs all the way to the EPSG:4978 origin -
+    // Earth's center - since that's where the anchor's own true-vertical axis (its own ECEF vector)
+    // leads; no raycasting needed, and no computed ground intersection either: RIA's own depth test
+    // is what actually reveals "this has reached the ground/a building," via the OCCLUDED_ONLY
+    // portion of the line. Going the full distance (rather than some camera- or scene-relative
+    // fraction of it) guarantees the line always crosses whatever terrain/mesh is beneath the
+    // vertex, no matter how high above the surface it's dragged or how zoomed in/out the camera is.
+    // "free" stays excluded - it's already continuously re-snapped to a surface, so a ground-line
+    // adds nothing there.
     const dropLineAnchorWGS84 = handle?.kind === "height" ? handle.dragStartWGS84 :
-        handle?.kind === "move" ? handle.currentWGS84 : null;
+        handle?.kind === "move" ? handle.currentWGS84 :
+        handle?.kind === "rotate" ? handle.dragStartWGS84 : null;
     if (this._showDropLine && dropLineAnchorWGS84) {
       const topEpsg4978 = WGS84_TO_EPSG4978.transform(dropLineAnchorWGS84);
       const earthCenterEpsg4978 = {x: 0, y: 0, z: 0};
@@ -1380,6 +1403,32 @@ export class Shape3DEditController extends Controller {
           [toPoint(EPSG_4978, topEpsg4978), toPoint(EPSG_4978, earthCenterEpsg4978)]);
       geoCanvas.drawShape(dropLine, DROP_LINE_STYLE);
       geoCanvas.drawShape(dropLine, DROP_LINE_OCCLUDED_STYLE);
+    }
+
+    // The filled wedge showing the angle swept so far - unconditional (not gated behind
+    // _showPlane/_showDropLine), since without it a rotate drag would show almost nothing but the
+    // numeric label, unlike move/height which at least get the guide line by default. Radius
+    // matches the rotate handle's own current on-screen offset distance (recomputed fresh here,
+    // same as every other camera-relative handle offset in this file), so the wedge's outer edge
+    // tracks the icon's position as the camera zooms mid-drag. No reference circle, tick marks, or
+    // start/end markers - deliberately minimal, and no unwrapping for sweeps past +-180 deg either -
+    // a known, accepted cosmetic limitation (the underlying rotation math is already correct
+    // regardless; only this visual could flip to the short side).
+    if (handle?.kind === "rotate" && handle.dragStartWGS84 && handle.rotationStartAzimuth !== null &&
+        handle.rotationDeltaDegrees !== null) {
+      const pivotWGS84 = handle.dragStartWGS84;
+      const activeVertexPositions = computePointHandlePositions(map, this._strategy.getVertex(shape, this._activeVertexIndex));
+      if (activeVertexPositions.rotate) {
+        const rotateIconWGS84 =
+            createTransformation(activeVertexPositions.rotate.reference!, WGS_84).transform(activeVertexPositions.rotate);
+        const radius = WGS84_GEODESY.distance(pivotWGS84, rotateIconWGS84);
+        const band2D = createArcBand(WGS_84, pivotWGS84, 0, radius, handle.rotationStartAzimuth, handle.rotationDeltaDegrees);
+        // Flat 2D shapes need an explicit height to sit correctly in 3D - same reasoning the
+        // toolbox's own RotateHandleSupport.toExtrudedShape uses.
+        const band = createExtrudedShape(WGS_84, band2D, pivotWGS84.z, pivotWGS84.z);
+        geoCanvas.drawShape(band, ROTATE_ARC_BAND_STYLE);
+        geoCanvas.drawShape(band, ROTATE_ARC_BAND_OCCLUDED_STYLE);
+      }
     }
 
     if (this._toolbar) {

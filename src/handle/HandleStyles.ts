@@ -540,6 +540,24 @@ export const MOVE_PLANE_OCCLUDED_STYLE: ShapeStyle = {
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
+// The filled wedge drawn during a rotate drag, showing the angle swept so far - a translucent
+// ROTATE_COLOR fill/stroke normally, switching to the same occlusion red MOVE_PLANE_OCCLUDED_STYLE
+// above already uses, keeping that "occluded = red warning" language consistent across every
+// ground-reference visual in this file.
+export const ROTATE_ARC_BAND_STYLE: ShapeStyle = {
+  stroke: {color: "rgba(80,200,200,0.7)", width: 1},
+  fill: {color: "rgba(80,200,200,0.3)"},
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const ROTATE_ARC_BAND_OCCLUDED_STYLE: ShapeStyle = {
+  stroke: {color: "rgba(230,40,40,0.75)", width: 1},
+  fill: {color: "rgba(230,40,40,0.3)"},
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
 // A vertical line drawn during height/move drags, from the current position downward - styled as
 // the same VISIBLE_ONLY/OCCLUDED_ONLY pair, so the portion that passes into/behind terrain or a
 // mesh shows in OCCLUDED_COLOR. This needs no raycasting at all: the drag's own direction is

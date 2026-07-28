@@ -146,12 +146,27 @@ export const verticalMovePointInteraction = (map: WebGLMap, viewPoint: Point,
 };
 
 /**
- * Creates a rotate interaction function: on every frame, projects the view point onto the ground
- * plane at the pivot's fixed height (same technique as `horizontalMovePointInteraction` above),
- * computes the compass bearing from the pivot to that projected point, and returns the signed
- * delta (in degrees, normalized to (-180, 180]) between that bearing and the one captured at drag
- * start. Unlike the other interactions here, this returns an angle, not a `Point` - there is no
- * single evolving position to report, since the pivot itself never moves during a rotation.
+ * Projects `viewPoint` onto the ground plane at `pivotWGS84`'s fixed height (same technique
+ * `horizontalMovePointInteraction` above uses) and returns the compass bearing from the pivot to
+ * that projected point. A one-shot helper, not itself a per-drag interaction closure - shared by
+ * `horizontalRotateAzimuthInteraction` below (called once at drag start and once per frame) and by
+ * `Shape3DEditController`, which needs this exact same start bearing independently to seed its
+ * rotate-arc visual (`EditHandle.rotationStartAzimuth`).
+ */
+export const azimuthToGroundProjectedPoint = (map: WebGLMap, viewPoint: Point, pivotWGS84: Point): number => {
+  const mapToWgs84Transformation = createTransformation(map.reference, WGS_84);
+  const viewToMapTransformation = map.getViewToMapTransformation(LocationMode.ELLIPSOID,
+      {heightOffset: pivotWGS84.z});
+  const projected = mapToWgs84Transformation.transform(viewToMapTransformation.transform(viewPoint));
+  return WGS84_GEODESY.forwardAzimuth(pivotWGS84, projected);
+};
+
+/**
+ * Creates a rotate interaction function: on every frame, returns the signed delta (in degrees,
+ * normalized to (-180, 180]) between the bearing captured at drag start and the current one (both
+ * via `azimuthToGroundProjectedPoint` above). Unlike the other interactions here, this returns an
+ * angle, not a `Point` - there is no single evolving position to report, since the pivot itself
+ * never moves during a rotation.
  *
  * Inspired by (not copied from) @luciad/ria-toolbox-controller/handle/
  * ControllerHandleInteractionFactory.js's `horizontalRotateInteraction`, but using
@@ -160,20 +175,9 @@ export const verticalMovePointInteraction = (map: WebGLMap, viewPoint: Point,
  */
 export const horizontalRotateAzimuthInteraction = (map: WebGLMap, viewPoint: Point,
                                                     pivotPoint: Point): (point: Point) => number => {
-  const pivotToWgs84 = createTransformation(pivotPoint.reference!, WGS_84);
-  const pivotWGS84 = pivotToWgs84.transform(pivotPoint);
-  const mapToWgs84Transformation = createTransformation(map.reference, WGS_84);
+  const pivotWGS84 = createTransformation(pivotPoint.reference!, WGS_84).transform(pivotPoint);
+  const azimuthStart = azimuthToGroundProjectedPoint(map, viewPoint, pivotWGS84);
 
-  const viewToMapTransformation = map.getViewToMapTransformation(LocationMode.ELLIPSOID,
-      {heightOffset: pivotWGS84.z});
-
-  const projectToWGS84 = (point: Point): Point =>
-      mapToWgs84Transformation.transform(viewToMapTransformation.transform(point));
-
-  const azimuthStart = WGS84_GEODESY.forwardAzimuth(pivotWGS84, projectToWGS84(viewPoint));
-
-  return (updatedViewPoint: Point): number => {
-    const azimuthNow = WGS84_GEODESY.forwardAzimuth(pivotWGS84, projectToWGS84(updatedViewPoint));
-    return normalizeSignedDegrees(azimuthNow - azimuthStart);
-  };
+  return (updatedViewPoint: Point): number =>
+      normalizeSignedDegrees(azimuthToGroundProjectedPoint(map, updatedViewPoint, pivotWGS84) - azimuthStart);
 };

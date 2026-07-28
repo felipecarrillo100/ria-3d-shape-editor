@@ -48,6 +48,13 @@ export class EditHandle {
   rotationInteractionFunction: ((viewPoint: Point) => number) | null = null;
   /** The latest value `rotationInteractionFunction` produced - read by onDrawLabel for the live angle readout. */
   rotationDeltaDegrees: number | null = null;
+  /**
+   * Only used by "rotate" - the absolute compass bearing (degrees) captured once at drag start,
+   * from the pivot to wherever the cursor first was. Needed as the rotate-arc visual's own
+   * `createArcBand` "start" edge, so it stays fixed at the gesture's actual start rather than
+   * being re-derived from the handle icon's own always-camera-relative offset position.
+   */
+  rotationStartAzimuth: number | null = null;
 
   constructor(kind: HandleKind) {
     this.kind = kind;
@@ -61,5 +68,6 @@ export class EditHandle {
     this.allVerticesStartWGS84 = null;
     this.rotationInteractionFunction = null;
     this.rotationDeltaDegrees = null;
+    this.rotationStartAzimuth = null;
   }
 }
