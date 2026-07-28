@@ -57,10 +57,12 @@ const SHAPE_BODY_Z_ORDER = -1;
 // @luciad/ria-toolbox-ria/geolocation/HandleStyles.ts's MAIN_STROKE_STYLE/MAIN_STROKE_OCCLUDED_STYLE
 // pair, drawn together in AltitudeHandleSupport.ts's drawBody).
 //
-// For the vertex/free handle, the drag-position ("current") diamond, and the shape's own
-// body/closing-segment preview (see PREVIEW_SHAPE_STYLE/PREVIEW_CLOSING_SEGMENT_STYLE below), the
-// OCCLUDED_ONLY variant also switches to OCCLUDED_COLOR/OCCLUDED_STROKE - these represent the
-// shape's real position/geometry, so recoloring when hidden behind terrain is a meaningful cue.
+// For the vertex/free handle, the drag-start/drag-position ("current") markers, the yellow guide
+// line joining them, and the shape's own body/closing-segment preview (see
+// PREVIEW_SHAPE_STYLE/PREVIEW_CLOSING_SEGMENT_STYLE below), the OCCLUDED_ONLY variant also switches
+// to OCCLUDED_COLOR/OCCLUDED_STROKE - these all represent the shape's real position/geometry (the
+// guide line's two ends are the vertex's actual position before and during the drag), so recoloring
+// when hidden behind terrain is a meaningful cue, not just decoration.
 //
 // The move/height/finish/cancel handle icons ALSO use this VISIBLE_ONLY/OCCLUDED_ONLY split, but
 // their OCCLUDED_ONLY variant deliberately uses the SAME color as its VISIBLE_ONLY counterpart, not
@@ -73,10 +75,6 @@ const SHAPE_BODY_Z_ORDER = -1;
 // despite their higher zOrder, while still ALWAYS_VISIBLE). Matching the shape body's own
 // VISIBLE_ONLY/OCCLUDED_ONLY category is the one configuration proven to respect zOrder here, since
 // it's exactly what already made the vertex icons above stack correctly.
-//
-// Only drag-start (the small diamond marking a drag's origin point) still keeps occlusionMode:
-// ALWAYS_VISIBLE with no occluded variant at all - it's never drawn anywhere near the shape body,
-// so this stacking issue doesn't apply to it.
 
 export const VERTEX_DEFAULT_ICON_STYLE: IconStyle = {
   url: createCircleIconImage(VERTEX_COLOR, VERTEX_STROKE, 5),
@@ -168,7 +166,15 @@ export const GUIDE_START_ICON_STYLE: IconStyle = {
   url: createCircleIconImage(VERTEX_COLOR, VERTEX_STROKE, 4),
   width: "14px",
   height: "14px",
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const GUIDE_START_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createCircleIconImage(OCCLUDED_COLOR, OCCLUDED_STROKE, 4),
+  width: "14px",
+  height: "14px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
@@ -355,7 +361,13 @@ export const CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
 /** Shared guide-line style for all three handle kinds' live drag feedback. */
 export const GUIDE_LINE_STYLE: ShapeStyle = {
   stroke: {color: GUIDE_COLOR, width: 2},
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const GUIDE_LINE_OCCLUDED_STYLE: ShapeStyle = {
+  stroke: {color: OCCLUDED_COLOR, width: 2},
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 

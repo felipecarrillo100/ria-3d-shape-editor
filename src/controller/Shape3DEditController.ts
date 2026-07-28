@@ -48,8 +48,10 @@ import {
   FINISH_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
   GUIDE_END_ICON_STYLE,
   GUIDE_END_OCCLUDED_ICON_STYLE,
+  GUIDE_LINE_OCCLUDED_STYLE,
   GUIDE_LINE_STYLE,
   GUIDE_START_ICON_STYLE,
+  GUIDE_START_OCCLUDED_ICON_STYLE,
   HEIGHT_HANDLE_DEFAULT_ICON_STYLE,
   HEIGHT_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
   HEIGHT_HANDLE_FOCUSED_ICON_STYLE,
@@ -971,7 +973,9 @@ export class Shape3DEditController extends Controller {
     if (handle?.dragStartWGS84 && handle.currentWGS84) {
       const line = createPolyline(WGS_84, [handle.dragStartWGS84, handle.currentWGS84]);
       geoCanvas.drawShape(line, GUIDE_LINE_STYLE);
+      geoCanvas.drawShape(line, GUIDE_LINE_OCCLUDED_STYLE);
       geoCanvas.drawIcon(handle.dragStartWGS84, GUIDE_START_ICON_STYLE);
+      geoCanvas.drawIcon(handle.dragStartWGS84, GUIDE_START_OCCLUDED_ICON_STYLE);
       geoCanvas.drawIcon(handle.currentWGS84, GUIDE_END_ICON_STYLE);
       geoCanvas.drawIcon(handle.currentWGS84, GUIDE_END_OCCLUDED_ICON_STYLE);
     }
