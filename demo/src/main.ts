@@ -69,7 +69,7 @@ const htmlToolbarCheckbox = document.getElementById('chk-html-toolbar') as HTMLI
 
 function startCreate(kind: keyof typeof SHAPE_TYPE_MAP): void {
   const ctrl = new Shape3DEditController(SHAPE_TYPE_MAP[kind], layer,
-    {showPlane: true, showDropLine: true, htmlToolbar: htmlToolbarCheckbox.checked})
+    {htmlToolbar: htmlToolbarCheckbox.checked})
   ctrl.on('ShapeEditingFinished', ({ shape, confirmed }) => {
     if (!confirmed) return
     const feature = new Feature(shape, {})
@@ -87,7 +87,7 @@ function startEdit(feature: Feature): void {
   const shapeType = shape.type as SupportedShapeType
   setEditedObject(layer, feature)
   const ctrl = new Shape3DEditController(shapeType, layer,
-    { existingShape: shape as EditableShape, showPlane: true, showDropLine: true, htmlToolbar: htmlToolbarCheckbox.checked })
+    { existingShape: shape as EditableShape, htmlToolbar: htmlToolbarCheckbox.checked })
   ctrl.on('ShapeEditingFinished', ({ shape: editedShape, confirmed }) => {
     if (!confirmed) {
       setEditedObject(layer, null)

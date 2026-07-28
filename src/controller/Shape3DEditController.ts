@@ -128,8 +128,8 @@ const TOUCH_DRAG_OFFSET_PIXELS = 40;
 // Short and identical for grab/drop - just enough to register as a deliberate cue, not a buzz.
 const HAPTIC_PULSE_MS = 10;
 const DEFAULT_UOM: UomFamily = "metric";
-const DEFAULT_SHOW_PLANE = false;
-const DEFAULT_SHOW_DROP_LINE = false;
+const DEFAULT_SHOW_PLANE = true;
+const DEFAULT_SHOW_DROP_LINE = true;
 const DEFAULT_HTML_TOOLBAR = false;
 // Larger than PointHandleLayout.ts's own DEFAULT_HANDLE_OFFSET_FACTOR (0.04) - this plane is a
 // visible ground reference, not a small icon offset, so it needs to read clearly at a glance.
@@ -155,16 +155,15 @@ export interface Shape3DEditControllerOptions {
   /**
    * While dragging the horizontal (move) handle, draw a translucent reference plane at the
    * frozen height, so it's visually obvious the drag is constrained to a flat surface. Default
-   * false.
+   * true.
    */
   showPlane?: boolean;
   /**
-   * While dragging the height or move handle, draw a vertical line from the vertex's current
-   * position all the way down to Earth's center, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so
-   * the portion that passes into/behind terrain or a mesh shows distinctly - a cheap,
-   * always-correct way to notice "this has reached the ground/a building" without any raycasting,
-   * regardless of how high above the surface the vertex is or how zoomed in/out the camera is.
-   * Default false.
+   * While dragging the height, move, or rotate handle, draw a vertical line from the drag's anchor
+   * all the way down to Earth's center, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so the portion
+   * that passes into/behind terrain or a mesh shows distinctly - a cheap, always-correct way to
+   * notice "this has reached the ground/a building" without any raycasting, regardless of how high
+   * above the surface the vertex is or how zoomed in/out the camera is. Default true.
    */
   showDropLine?: boolean;
   /**
