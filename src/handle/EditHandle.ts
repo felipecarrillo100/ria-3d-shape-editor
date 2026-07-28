@@ -8,7 +8,8 @@ import {Point} from "@luciad/ria/shape/Point.js";
 // handle either inserts a real vertex and continues as an ordinary "free"/"move"/"height" drag on
 // that new vertex, or - with Shift held - shifts the whole shape without ever inserting one; the
 // midpoint itself never becomes the handle's own kind either way.
-export type HandleKind = "free" | "move" | "height" | "finish" | "cancel" | "midpoint" | "shiftToggle" | "remove";
+export type HandleKind =
+    "free" | "move" | "height" | "finish" | "cancel" | "midpoint" | "shiftToggle" | "remove" | "rotate";
 
 /**
  * Tracks the live state of one draggable handle (free/move/height) while it targets a particular
@@ -38,6 +39,16 @@ export class EditHandle {
    */
   isTouch = false;
 
+  /**
+   * Only used by "rotate" - the per-frame signed angle delta (degrees) swept so far, relative to
+   * drag start. "rotate" never produces a single evolving position the way free/move/height do
+   * (the pivot vertex it targets never moves), so this doesn't fit `interactionFunction`'s
+   * `Point`-returning signature - it gets its own, separate function.
+   */
+  rotationInteractionFunction: ((viewPoint: Point) => number) | null = null;
+  /** The latest value `rotationInteractionFunction` produced - read by onDrawLabel for the live angle readout. */
+  rotationDeltaDegrees: number | null = null;
+
   constructor(kind: HandleKind) {
     this.kind = kind;
   }
@@ -48,5 +59,7 @@ export class EditHandle {
     this.currentWGS84 = null;
     this.shiftWholeShape = false;
     this.allVerticesStartWGS84 = null;
+    this.rotationInteractionFunction = null;
+    this.rotationDeltaDegrees = null;
   }
 }

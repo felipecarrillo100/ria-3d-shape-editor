@@ -11,6 +11,7 @@ import {
   createDiamondIconImage,
   createHorizontalArrowIconImage,
   createMinusIconImage,
+  createRotateArrowIconImage,
   createShiftUpArrowIconImage,
   createVerticalArrowIconImage,
   createXMarkIconImage,
@@ -42,6 +43,9 @@ const CANCEL_COLOR = "rgb(230,80,80)";
 // MOVE_COLOR's more muted green (rgb(110,200,110)) so the two stay visually distinct even though
 // they're the same hue family and sit right next to each other when whole-shape mode is active.
 const SHIFT_TOGGLE_ON_COLOR = "rgb(60,220,90)";
+// Distinct from every other handle color already in use (move green, height orange, finish blue,
+// cancel/remove red, shiftToggle-on green, shiftToggle-off/inactive gray) - a teal.
+const ROTATE_COLOR = "rgb(80,200,200)";
 const HANDLE_BG = "rgb(10,10,10)";
 // Deliberately more saturated than HEIGHT_COLOR above, so an occluded height handle still reads
 // as a clear, distinct warning rather than just "still kind of orange."
@@ -393,6 +397,44 @@ export const REMOVE_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
 
 export const REMOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
   url: createMinusIconImage(CANCEL_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+// Top-right, drag-only - rotates the whole shape around the active vertex. Only ever drawn/
+// hit-tested while whole-shape mode is armed (Shape3DEditController checks
+// this._shiftWholeShapeToggled directly before drawing this pair - see drawFullHandleSet), since
+// rotating a single vertex around itself is meaningless. Its own dedicated teal, distinct from
+// every other handle color already in use (move green, height orange, finish blue, cancel/remove
+// red, shiftToggle-on green, shiftToggle-off/inactive gray).
+export const ROTATE_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
+  url: createRotateArrowIconImage(ROTATE_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const ROTATE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createRotateArrowIconImage(ROTATE_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const ROTATE_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
+  url: createRotateArrowIconImage(ROTATE_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const ROTATE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createRotateArrowIconImage(ROTATE_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
   occlusionMode: OcclusionMode.OCCLUDED_ONLY,

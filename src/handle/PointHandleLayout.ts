@@ -57,6 +57,13 @@ export interface PointHandlePositions {
    * `finish`. Click to remove this vertex. Null wherever `move`/`height` are, for the same reason.
    */
   remove: Point | null;
+  /**
+   * Top-right of the vertex - the mirror of `remove` (same offset magnitudes, opposite
+   * horizontal side). Drag to rotate the whole shape around this vertex - only meaningful (and
+   * only ever offered) while whole-shape mode is armed, since rotating a single vertex around
+   * itself is a no-op. Null wherever `move`/`height` are, for the same reason.
+   */
+  rotate: Point | null;
 }
 
 export function computePointHandlePositions(
@@ -69,7 +76,7 @@ export function computePointHandlePositions(
   if (!map.reference.equals(EPSG_4978)) {
     return {
       free: vertexInMapRef, move: null, height: null, finish: null, cancel: null, shiftToggle: null,
-      remove: null,
+      remove: null, rotate: null,
     };
   }
 
@@ -81,11 +88,12 @@ export function computePointHandlePositions(
   const height = toPoint(map.reference, add(vertexInMapRef, scale(up, offset)));
   const shiftToggle = toPoint(map.reference, add(vertexInMapRef, scale(cameraRight, -offset)));
   const remove = toPoint(map.reference, add(add(vertexInMapRef, scale(up, offset)), scale(cameraRight, -offset)));
+  const rotate = toPoint(map.reference, add(add(vertexInMapRef, scale(up, offset)), scale(cameraRight, offset)));
 
   const belowCenter = add(vertexInMapRef, scale(up, -offset * BELOW_VERTICAL_OFFSET_MULTIPLIER));
   const horizontalStep = scale(cameraRight, offset * BELOW_HORIZONTAL_OFFSET_MULTIPLIER);
   const cancel = toPoint(map.reference, add(belowCenter, scale(horizontalStep, -1)));
   const finish = toPoint(map.reference, add(belowCenter, horizontalStep));
 
-  return {free: vertexInMapRef, move, height, finish, cancel, shiftToggle, remove};
+  return {free: vertexInMapRef, move, height, finish, cancel, shiftToggle, remove, rotate};
 }

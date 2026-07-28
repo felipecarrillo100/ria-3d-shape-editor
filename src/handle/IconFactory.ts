@@ -155,3 +155,47 @@ export function createShiftUpArrowIconImage(color: string, bgColor: string, size
       `</svg>`
   );
 }
+
+/**
+ * A circular arc with one arrowhead at its end (leaving a gap, so it reads as "rotate" rather
+ * than a closed circle/loop) inside a circle - used for the whole-shape rotate-around-vertex
+ * handle. Inspired by (not copied from) the barbed-arc-arrow shape LuciadRIA's own oriented-box
+ * toolbox uses for its rotate handle, hand-drawn fresh here.
+ */
+export function createRotateArrowIconImage(color: string, bgColor: string, sizePx = 9): string {
+  const r = sizePx + 2;
+  const size = r * 2;
+  const c = size / 2;
+  const arcRadius = sizePx * 0.8;
+  const startDeg = -30;
+  const endDeg = 240;
+  const toRad = (deg: number) => deg * Math.PI / 180;
+  const pointOnCircle = (deg: number): [number, number] => {
+    const rad = toRad(deg);
+    return [c + arcRadius * Math.sin(rad), c - arcRadius * Math.cos(rad)];
+  };
+  const [startX, startY] = pointOnCircle(startDeg);
+  const [endX, endY] = pointOnCircle(endDeg);
+
+  // Arrowhead at the arc's end, tangent to the direction of travel (clockwise, since startDeg <
+  // endDeg in this y-down, angle-from-top parameterization).
+  const endRad = toRad(endDeg);
+  const tangent: [number, number] = [Math.cos(endRad), Math.sin(endRad)];
+  const normal: [number, number] = [-Math.sin(endRad), Math.cos(endRad)];
+  const headLen = sizePx * 0.6;
+  const tipX = endX + tangent[0] * headLen;
+  const tipY = endY + tangent[1] * headLen;
+  const base1X = endX - normal[0] * headLen * 0.5;
+  const base1Y = endY - normal[1] * headLen * 0.5;
+  const base2X = endX + normal[0] * headLen * 0.5;
+  const base2Y = endY + normal[1] * headLen * 0.5;
+
+  return encodeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+      `<circle cx="${c}" cy="${c}" r="${r - 1}" fill="${bgColor}" stroke="${color}" stroke-width="1.5"/>` +
+      `<path d="M ${startX} ${startY} A ${arcRadius} ${arcRadius} 0 1 1 ${endX} ${endY}" ` +
+      `fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round"/>` +
+      `<polygon points="${tipX},${tipY} ${base1X},${base1Y} ${base2X},${base2Y}" fill="${color}"/>` +
+      `</svg>`
+  );
+}

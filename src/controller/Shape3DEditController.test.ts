@@ -2,12 +2,18 @@ import {describe, expect, it} from "vitest";
 import {createPoint, createPolygon} from "@luciad/ria/shape/ShapeFactory.js";
 import {Polygon} from "@luciad/ria/shape/Polygon.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
+import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
+import {createEllipsoidalGeodesy} from "@luciad/ria/geodesy/GeodesyFactory.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {FeatureLayer} from "@luciad/ria/view/feature/FeatureLayer.js";
 import {EVENT_HANDLED, EVENT_IGNORED} from "@luciad/ria/view/controller/HandleEventResult.js";
 import {Shape3DEditController} from "./Shape3DEditController.js";
 
 const REFERENCE = getReference("EPSG:4978");
+const WGS_84 = getReference("CRS:84");
+
+/** Normalizes any angle in degrees into (-180, 180] - mirrors HandleInteractions.ts's own helper. */
+const normalizeSignedDegrees = (degrees: number): number => ((degrees % 360) + 540) % 360 - 180;
 
 // A real FeatureLayer needs a real FeatureModel/Store; these tests only ever read
 // `layer.model.reference`, so a minimal stand-in is enough and keeps the tests independent of any
@@ -92,5 +98,48 @@ describe("Shape3DEditController.removeVertexAtIndex()", () => {
 
     expect(result).toBe(EVENT_IGNORED);
     expect(controller.shape).toBe(point);
+  });
+});
+
+// rotateOtherVerticesAround is the whole-shape-rotate handle's shared math, exercised directly
+// here (rather than through a simulated drag gesture) since it's pure geodesy with no map/view
+// dependency - the cursor-to-angle plumbing (horizontalRotateAzimuthInteraction) is deliberately
+// left to manual/demo verification, matching this codebase's existing precedent for the other
+// interaction functions in HandleInteractions.ts, which also aren't unit-tested beyond their
+// non-geocentric no-op guards.
+describe("Shape3DEditController.rotateOtherVerticesAround()", () => {
+  it("rotates a non-pivot vertex around the pivot, preserving distance/height and shifting azimuth by the delta", () => {
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+    const geodesy = createEllipsoidalGeodesy(WGS_84);
+
+    const pivotWGS84 = createPoint(WGS_84, [10, 20, 100]);
+    const otherWGS84 = createPoint(WGS_84, [10.001, 20, 150]);
+    const originalDistance = geodesy.distance(pivotWGS84, otherWGS84);
+    const originalAzimuth = geodesy.forwardAzimuth(pivotWGS84, otherWGS84);
+
+    (controller as any).rotateOtherVerticesAround(pivotWGS84, 90, 0, [pivotWGS84, otherWGS84]);
+
+    const rotatedInShapeRef = (controller.shape as Polygon).getPoint(1);
+    const rotatedWGS84 = createTransformation(REFERENCE, WGS_84).transform(rotatedInShapeRef);
+
+    expect(geodesy.distance(pivotWGS84, rotatedWGS84)).toBeCloseTo(originalDistance, 1);
+    expect(rotatedWGS84.z).toBeCloseTo(150, 3);
+    const actualAzimuthDelta = normalizeSignedDegrees(geodesy.forwardAzimuth(pivotWGS84, rotatedWGS84) - originalAzimuth);
+    expect(actualAzimuthDelta).toBeCloseTo(90, 0);
+  });
+
+  it("leaves the pivot vertex itself unchanged", () => {
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+    const pivotWGS84 = createPoint(WGS_84, [10, 20, 100]);
+    const otherWGS84 = createPoint(WGS_84, [10.001, 20, 150]);
+
+    (controller as any).rotateOtherVerticesAround(pivotWGS84, 45, 0, [pivotWGS84, otherWGS84]);
+
+    const pivotAfter = (controller.shape as Polygon).getPoint(0);
+    expect(pivotAfter.x).toBeCloseTo(0);
+    expect(pivotAfter.y).toBeCloseTo(0);
+    expect(pivotAfter.z).toBeCloseTo(0);
   });
 });

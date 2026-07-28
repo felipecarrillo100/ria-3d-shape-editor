@@ -21,8 +21,8 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 // Adapted from @luciad/ria-toolbox-controller/handle/ControllerHandleInteractionFactory.js, trimmed
-// to the two interactions this package needs (no rotate/directional/linear/planar variants, no
-// hit-test helpers - we do our own vertex hit-testing in VertexHitTest.ts).
+// to the interactions this package needs (no directional/linear/planar variants, no hit-test
+// helpers - we do our own vertex hit-testing in VertexHitTest.ts).
 //
 // Two deliberate deviations from the original:
 // 1. `horizontalMovePointInteraction` drops the `options` parameter entirely and always behaves as
@@ -40,12 +40,17 @@ import {Point} from "@luciad/ria/shape/Point.js";
 import {LocationMode} from "@luciad/ria/transformation/LocationMode.js";
 import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
+import {createEllipsoidalGeodesy} from "@luciad/ria/geodesy/GeodesyFactory.js";
 import {add, cross, distanceAlongDirection, rayPlaneIntersection, sub, toPoint} from "../math/Vector3Util.js";
 import {calculatePointingDirection} from "../math/PerspectiveCameraUtil.js";
 import {raycastClosestSurface} from "./raycastClosestSurface.js";
 
 const WGS_84 = getReference("CRS:84");
 const EPSG_4978 = getReference("EPSG:4978");
+const WGS84_GEODESY = createEllipsoidalGeodesy(WGS_84);
+
+/** Normalizes any angle in degrees into (-180, 180] - safe for negative inputs, unlike a plain `% 360`. */
+const normalizeSignedDegrees = (degrees: number): number => ((degrees % 360) + 540) % 360 - 180;
 
 /**
  * Creates a "free" move point interaction function: on every frame, raycasts the current view
@@ -138,4 +143,37 @@ export const verticalMovePointInteraction = (map: WebGLMap, viewPoint: Point,
     // frame's result rather than throwing out of a live gesture handler.
     return lastResult;
   }
+};
+
+/**
+ * Creates a rotate interaction function: on every frame, projects the view point onto the ground
+ * plane at the pivot's fixed height (same technique as `horizontalMovePointInteraction` above),
+ * computes the compass bearing from the pivot to that projected point, and returns the signed
+ * delta (in degrees, normalized to (-180, 180]) between that bearing and the one captured at drag
+ * start. Unlike the other interactions here, this returns an angle, not a `Point` - there is no
+ * single evolving position to report, since the pivot itself never moves during a rotation.
+ *
+ * Inspired by (not copied from) @luciad/ria-toolbox-controller/handle/
+ * ControllerHandleInteractionFactory.js's `horizontalRotateInteraction`, but using
+ * `Geodesy.forwardAzimuth` (a plain `@luciad/ria` API, not toolbox-only) instead of a 3D vector
+ * rotation - the pivot's local vertical axis makes this a purely horizontal/geodetic calculation.
+ */
+export const horizontalRotateAzimuthInteraction = (map: WebGLMap, viewPoint: Point,
+                                                    pivotPoint: Point): (point: Point) => number => {
+  const pivotToWgs84 = createTransformation(pivotPoint.reference!, WGS_84);
+  const pivotWGS84 = pivotToWgs84.transform(pivotPoint);
+  const mapToWgs84Transformation = createTransformation(map.reference, WGS_84);
+
+  const viewToMapTransformation = map.getViewToMapTransformation(LocationMode.ELLIPSOID,
+      {heightOffset: pivotWGS84.z});
+
+  const projectToWGS84 = (point: Point): Point =>
+      mapToWgs84Transformation.transform(viewToMapTransformation.transform(point));
+
+  const azimuthStart = WGS84_GEODESY.forwardAzimuth(pivotWGS84, projectToWGS84(viewPoint));
+
+  return (updatedViewPoint: Point): number => {
+    const azimuthNow = WGS84_GEODESY.forwardAzimuth(pivotWGS84, projectToWGS84(updatedViewPoint));
+    return normalizeSignedDegrees(azimuthNow - azimuthStart);
+  };
 };
