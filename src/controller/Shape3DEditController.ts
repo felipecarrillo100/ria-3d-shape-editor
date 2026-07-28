@@ -74,6 +74,10 @@ import {
   PREVIEW_CLOSING_SEGMENT_STYLE,
   PREVIEW_SHAPE_OCCLUDED_STYLE,
   PREVIEW_SHAPE_STYLE,
+  REMOVE_HANDLE_DEFAULT_ICON_STYLE,
+  REMOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
+  REMOVE_HANDLE_FOCUSED_ICON_STYLE,
+  REMOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE,
   SHIFT_TOGGLE_OFF_ICON_STYLE,
   SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE,
   SHIFT_TOGGLE_ON_ICON_STYLE,
@@ -191,14 +195,19 @@ export interface Shape3DEditControllerOptions {
  * it only mutates the shape object it is given (or creates), and emits events describing what
  * happened - persistence is entirely the caller's responsibility.
  *
- * Each vertex offers up to five simultaneous, individually-grabbable handles: dragging the vertex
- * icon itself ("free") moves it in X/Y/Z, adopting whatever surface is under the cursor; a small
- * offset "move" handle (to the side) constrains the drag to X/Y only (height frozen); a small
- * offset "height" handle (above) constrains the drag to Z only (X/Y frozen); and a click-only pair
- * below the vertex - a checkmark ("finish", confirm and end editing, down-right) and an X
- * ("cancel", discard and end editing, down-left), grouped together and deliberately separated from
- * the shape-adjusting handles above/beside the vertex. The move/height/finish/cancel handles only
- * appear on a 3D (EPSG:4978) map - see HandleInteractions.ts's verticalMovePointInteraction guard.
+ * Each vertex offers up to several simultaneous, individually-grabbable handles: dragging the
+ * vertex icon itself ("free") moves it in X/Y/Z, adopting whatever surface is under the cursor; a
+ * small offset "move" handle (to the side) constrains the drag to X/Y only (height frozen); a
+ * small offset "height" handle (above) constrains the drag to Z only (X/Y frozen); a click-only
+ * "remove" handle (top-left, same horizontal offset as "move" mirrored to the other side, same
+ * vertical offset as "height") removes the vertex outright (also reachable via double-click/
+ * double-tap anywhere near a vertex - see removeVertexNear); a click-only "shiftToggle" handle
+ * (the exact mirror of "move," on the opposite side) toggles whole-shape move/height mode; and a
+ * click-only pair below the vertex - a checkmark ("finish", confirm and end editing, down-right)
+ * and an X ("cancel", discard and end editing, down-left), grouped together and deliberately
+ * separated from the shape-adjusting handles above/beside the vertex. The move/height/finish/
+ * cancel/shiftToggle/remove handles only appear on a 3D (EPSG:4978) map - see
+ * HandleInteractions.ts's verticalMovePointInteraction guard.
  *
  * Nothing is persisted by this controller itself - it only mutates the shape it creates/is given.
  * Callers should persist (if at all) only in response to `ShapeEditingFinished` with
@@ -638,24 +647,25 @@ export class Shape3DEditController extends Controller {
       return this.handleEditClick(map, event);
     } else if (event.type === GestureEventType.DOUBLE_CLICK) {
       return this.handleEditDoubleClick(map, event);
-    } else if (event.type === GestureEventType.LONG_PRESS) {
-      return this.handleEditLongPress(map, event);
     }
     return EVENT_IGNORED;
   }
 
   /**
    * The full handle candidate set offered by whichever target (a real vertex or a virtual
-   * midpoint) is currently active - free/move/height always, plus finish/cancel only when
-   * `htmlToolbar` is off. It's one or the other, never both: with `htmlToolbar` on, the canvas
-   * finish/cancel icons aren't drawn either (see drawFullHandleSet), so there'd be nothing visible
-   * to hit-test against - excluding them here keeps hover/click/drag from ever recognizing an
-   * invisible hit zone in that area.
+   * midpoint) is currently active - free/move/height/shiftToggle always, plus finish/cancel only
+   * when `htmlToolbar` is off (see below), plus remove only when `canRemove` (a virtual, not yet
+   * promoted midpoint has nothing to remove; a shape at its minimum vertex count can't lose one
+   * either - see ShapeEditStrategy.canRemoveVertex). It's one or the other for finish/cancel, never
+   * both: with `htmlToolbar` on, the canvas finish/cancel icons aren't drawn either (see
+   * drawFullHandleSet), so there'd be nothing visible to hit-test against - excluding them here
+   * keeps hover/click/drag from ever recognizing an invisible hit zone in that area.
    */
-  private static fullHandleCandidates(positions: PointHandlePositions, htmlToolbar: boolean): Array<[HandleKind, Point | null]> {
+  private static fullHandleCandidates(
+      positions: PointHandlePositions, htmlToolbar: boolean, canRemove: boolean): Array<[HandleKind, Point | null]> {
     const candidates: Array<[HandleKind, Point | null]> =
         [["free", positions.free], ["move", positions.move], ["height", positions.height],
-         ["shiftToggle", positions.shiftToggle]];
+         ["shiftToggle", positions.shiftToggle], ["remove", canRemove ? positions.remove : null]];
     if (!htmlToolbar) {
       candidates.push(["finish", positions.finish], ["cancel", positions.cancel]);
     }
@@ -684,7 +694,7 @@ export class Shape3DEditController extends Controller {
       // to just its plain marker.
       const candidates: Array<[HandleKind, Point | null]> =
           this._activeSegmentIndex === null && i === this._activeVertexIndex
-              ? Shape3DEditController.fullHandleCandidates(positions, this._htmlToolbar)
+              ? Shape3DEditController.fullHandleCandidates(positions, this._htmlToolbar, this._strategy.canRemoveVertex(shape, i))
               : [["free", positions.free]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -711,7 +721,7 @@ export class Shape3DEditController extends Controller {
       const b = this._strategy.getVertex(shape, (i + 1) % count);
       const midpointPosition = computeSegmentMidpointPosition(map, a, b);
       const candidates: Array<[HandleKind, Point | null]> = this._activeSegmentIndex === i
-          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition), this._htmlToolbar)
+          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition), this._htmlToolbar, false)
           : [["midpoint", midpointPosition]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -795,6 +805,9 @@ export class Shape3DEditController extends Controller {
       this.invalidate();
       return EVENT_HANDLED;
     }
+    if (this._hoveredHandleKind === "remove") {
+      return this.removeVertexAtIndex(this._activeVertexIndex);
+    }
     if (this._hoveredHandleKind === "midpoint" && this._hoveredSegmentIndex !== null) {
       this._activeSegmentIndex = this._hoveredSegmentIndex;
       this.invalidate();
@@ -840,8 +853,8 @@ export class Shape3DEditController extends Controller {
         return EVENT_IGNORED;
       }
       if (this._hoveredHandleKind === "finish" || this._hoveredHandleKind === "cancel" ||
-          this._hoveredHandleKind === "shiftToggle") {
-        // All three are click targets, not drag targets - absorb the gesture (so it doesn't pan
+          this._hoveredHandleKind === "shiftToggle" || this._hoveredHandleKind === "remove") {
+        // All four are click targets, not drag targets - absorb the gesture (so it doesn't pan
         // the camera through what's meant to be a fixed button) without acting on it.
         return EVENT_HANDLED;
       }
@@ -976,24 +989,21 @@ export class Shape3DEditController extends Controller {
     return this.removeVertexNear(map, event);
   }
 
-  /**
-   * Touch-only alternative to double-tap for removing a vertex - double-tapping to delete fights
-   * the "double-tap to zoom" muscle memory built into nearly every map app. Shares the exact same
-   * fresh hit-test + removal logic as double-click. Gated to touch only: LONG_PRESS's own doc
-   * comment doesn't say whether it can also fire for a mouse held stationary before a drag starts,
-   * and firing vertex deletion from an ordinary mouse pause-before-drag would be a real
-   * regression - double-click/double-tap keeps working for both input types regardless.
-   */
-  private handleEditLongPress(map: WebGLMap, event: GestureEvent): HandleEventResult {
-    if (event.inputType !== "touch") {
-      return EVENT_IGNORED;
-    }
-    return this.removeVertexNear(map, event);
-  }
-
   private removeVertexNear(map: WebGLMap, event: GestureEvent): HandleEventResult {
     const shape = this._shape!;
     const index = findClosestVertexIndex(map, event.viewPoint, shape, this._strategy, this.effectiveHitTolerance(event.inputType));
+    return this.removeVertexAtIndex(index);
+  }
+
+  /**
+   * Removes the vertex at `index` (a no-op if it's out of range or the shape is already at its
+   * minimum vertex count) - shared by double-click/double-tap removal (`removeVertexNear`, which
+   * hit-tests to find `index`) and the `remove` handle's click (which already knows `index` is
+   * `_activeVertexIndex`, and that it's removable, since the handle candidate is gated on
+   * `canRemoveVertex` in the first place - see `fullHandleCandidates`).
+   */
+  private removeVertexAtIndex(index: number): HandleEventResult {
+    const shape = this._shape!;
     if (index < 0 || !this._strategy.canRemoveVertex(shape, index)) {
       return EVENT_IGNORED;
     }
@@ -1119,7 +1129,8 @@ export class Shape3DEditController extends Controller {
    * only affects the move/height icons' size, independent of `activeKind`'s color - see the new
    * `*_SHIFT_ICON_STYLE` constants.
    */
-  private drawFullHandleSet(geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null): void {
+  private drawFullHandleSet(
+      geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null, canRemove: boolean): void {
     if (activeKind === "free") {
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_ICON_STYLE);
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_OCCLUDED_ICON_STYLE);
@@ -1147,6 +1158,13 @@ export class Shape3DEditController extends Controller {
           [SHIFT_TOGGLE_OFF_ICON_STYLE, SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.shiftToggle, style);
       geoCanvas.drawIcon(positions.shiftToggle, occludedStyle);
+    }
+    if (positions.remove && canRemove) {
+      const [style, occludedStyle] = activeKind === "remove" ?
+          [REMOVE_HANDLE_FOCUSED_ICON_STYLE, REMOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
+          [REMOVE_HANDLE_DEFAULT_ICON_STYLE, REMOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
+      geoCanvas.drawIcon(positions.remove, style);
+      geoCanvas.drawIcon(positions.remove, occludedStyle);
     }
     // One or the other, never both - the htmlToolbar option is a full replacement for these two
     // icons, not an addition alongside them (matching fullHandleCandidates' matching exclusion,
@@ -1195,7 +1213,8 @@ export class Shape3DEditController extends Controller {
           i === this._activeHandle?.vertexIndex ? this._activeHandle!.kind :
           i === this._hoveredVertexIndex ? this._hoveredHandleKind :
           null;
-      this.drawFullHandleSet(geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind);
+      this.drawFullHandleSet(
+          geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind, this._strategy.canRemoveVertex(shape, i));
     }
 
     // Virtual per-segment midpoint markers - recomputed live from the current vertex list every
@@ -1231,7 +1250,7 @@ export class Shape3DEditController extends Controller {
               ? this._activeHandle.kind :
           this._hoveredSegmentIndex === i ? this._hoveredHandleKind :
           null;
-      this.drawFullHandleSet(geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind);
+      this.drawFullHandleSet(geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind, false);
     }
 
     const handle = this._activeHandle;

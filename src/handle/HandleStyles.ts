@@ -10,7 +10,8 @@ import {
   createCircleIconImage,
   createDiamondIconImage,
   createHorizontalArrowIconImage,
-  createShapeToggleIconImage,
+  createMinusIconImage,
+  createShiftUpArrowIconImage,
   createVerticalArrowIconImage,
   createXMarkIconImage,
 } from "./IconFactory.js";
@@ -37,9 +38,10 @@ const HEIGHT_COLOR = "rgb(255,150,60)";
 const DROP_LINE_COLOR = "rgb(60,140,240)";
 const FINISH_COLOR = "rgb(80,150,255)";
 const CANCEL_COLOR = "rgb(230,80,80)";
-// Distinct from every other handle color already in use (move green, height orange, finish blue,
-// cancel red) - the whole-shape toggle needs its own identity, unmistakable at a glance.
-const SHIFT_TOGGLE_ON_COLOR = "rgb(200,120,230)";
+// A saturated, keyboard-indicator-LED-style green - deliberately more vivid/saturated than
+// MOVE_COLOR's more muted green (rgb(110,200,110)) so the two stay visually distinct even though
+// they're the same hue family and sit right next to each other when whole-shape mode is active.
+const SHIFT_TOGGLE_ON_COLOR = "rgb(60,220,90)";
 const HANDLE_BG = "rgb(10,10,10)";
 // Deliberately more saturated than HEIGHT_COLOR above, so an occluded height handle still reads
 // as a clear, distinct warning rather than just "still kind of orange."
@@ -362,12 +364,50 @@ export const CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
-// A single dot (off - dragging move/height affects one vertex) or four dots (on - affects the
-// whole shape) - click-only, toggles Shape3DEditController's whole-shape mode. Same
-// muted-when-inactive language as VERTEX_INACTIVE_ICON_STYLE for "off", and its own dedicated
-// color for "on" so the mode is unmistakable at a glance.
+// Top-left, click-only - removes the active vertex. Shares CANCEL_COLOR with the cancel handle
+// (both are destructive actions) but a distinct minus glyph (vs. cancel's X), so "discard the
+// session" and "remove this one vertex" stay unambiguous.
+export const REMOVE_HANDLE_DEFAULT_ICON_STYLE: IconStyle = {
+  url: createMinusIconImage(CANCEL_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const REMOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createMinusIconImage(CANCEL_COLOR, HANDLE_BG, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const REMOVE_HANDLE_FOCUSED_ICON_STYLE: IconStyle = {
+  url: createMinusIconImage(CANCEL_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const REMOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createMinusIconImage(CANCEL_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+// The keyboard-Shift glyph (a single up arrow) - click-only, toggles Shape3DEditController's
+// whole-shape mode. Same muted-when-inactive language as VERTEX_INACTIVE_ICON_STYLE for "off";
+// "on" gets both its own dedicated green (a saturated, keyboard-indicator-LED-style color, kept
+// distinct from MOVE_COLOR's more muted green so it doesn't blend into the move icon it sits
+// beside and simultaneously recolors) and a size bump, matching the exact same default-vs-bigger
+// jump MOVE_HANDLE_SHIFT_ICON_STYLE/HEIGHT_HANDLE_SHIFT_ICON_STYLE already use - one consistent
+// "bigger = whole-shape mode is on" rule across every icon the mode touches, including this one.
 export const SHIFT_TOGGLE_OFF_ICON_STYLE: IconStyle = {
-  url: createShapeToggleIconImage(INACTIVE_COLOR, HANDLE_BG, false, 8),
+  url: createShiftUpArrowIconImage(INACTIVE_COLOR, HANDLE_BG, 8),
   width: "22px",
   height: "22px",
   occlusionMode: OcclusionMode.VISIBLE_ONLY,
@@ -375,7 +415,7 @@ export const SHIFT_TOGGLE_OFF_ICON_STYLE: IconStyle = {
 };
 
 export const SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE: IconStyle = {
-  url: createShapeToggleIconImage(INACTIVE_COLOR, HANDLE_BG, false, 8),
+  url: createShiftUpArrowIconImage(INACTIVE_COLOR, HANDLE_BG, 8),
   width: "22px",
   height: "22px",
   occlusionMode: OcclusionMode.OCCLUDED_ONLY,
@@ -383,17 +423,17 @@ export const SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE: IconStyle = {
 };
 
 export const SHIFT_TOGGLE_ON_ICON_STYLE: IconStyle = {
-  url: createShapeToggleIconImage(SHIFT_TOGGLE_ON_COLOR, HANDLE_BG, true, 8),
-  width: "22px",
-  height: "22px",
+  url: createShiftUpArrowIconImage(SHIFT_TOGGLE_ON_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
   occlusionMode: OcclusionMode.VISIBLE_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
 export const SHIFT_TOGGLE_ON_OCCLUDED_ICON_STYLE: IconStyle = {
-  url: createShapeToggleIconImage(SHIFT_TOGGLE_ON_COLOR, HANDLE_BG, true, 8),
-  width: "22px",
-  height: "22px",
+  url: createShiftUpArrowIconImage(SHIFT_TOGGLE_ON_COLOR, HANDLE_BG, 10),
+  width: "26px",
+  height: "26px",
   occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };

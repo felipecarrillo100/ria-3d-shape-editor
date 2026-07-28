@@ -51,6 +51,12 @@ export interface PointHandlePositions {
    * are, for the same reason.
    */
   shiftToggle: Point | null;
+  /**
+   * Top-left of the vertex - same horizontal offset magnitude as `move` (mirrored to the left,
+   * like `shiftToggle`), same vertical offset magnitude as `height`. The diagonal corner opposite
+   * `finish`. Click to remove this vertex. Null wherever `move`/`height` are, for the same reason.
+   */
+  remove: Point | null;
 }
 
 export function computePointHandlePositions(
@@ -61,7 +67,10 @@ export function computePointHandlePositions(
   const vertexInMapRef = createTransformation(vertexPoint.reference!, map.reference).transform(vertexPoint);
 
   if (!map.reference.equals(EPSG_4978)) {
-    return {free: vertexInMapRef, move: null, height: null, finish: null, cancel: null, shiftToggle: null};
+    return {
+      free: vertexInMapRef, move: null, height: null, finish: null, cancel: null, shiftToggle: null,
+      remove: null,
+    };
   }
 
   const up = normalize(vertexInMapRef);
@@ -71,11 +80,12 @@ export function computePointHandlePositions(
   const move = toPoint(map.reference, add(vertexInMapRef, scale(cameraRight, offset)));
   const height = toPoint(map.reference, add(vertexInMapRef, scale(up, offset)));
   const shiftToggle = toPoint(map.reference, add(vertexInMapRef, scale(cameraRight, -offset)));
+  const remove = toPoint(map.reference, add(add(vertexInMapRef, scale(up, offset)), scale(cameraRight, -offset)));
 
   const belowCenter = add(vertexInMapRef, scale(up, -offset * BELOW_VERTICAL_OFFSET_MULTIPLIER));
   const horizontalStep = scale(cameraRight, offset * BELOW_HORIZONTAL_OFFSET_MULTIPLIER);
   const cancel = toPoint(map.reference, add(belowCenter, scale(horizontalStep, -1)));
   const finish = toPoint(map.reference, add(belowCenter, horizontalStep));
 
-  return {free: vertexInMapRef, move, height, finish, cancel, shiftToggle};
+  return {free: vertexInMapRef, move, height, finish, cancel, shiftToggle, remove};
 }

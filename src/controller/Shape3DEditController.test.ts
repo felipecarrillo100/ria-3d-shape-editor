@@ -4,6 +4,7 @@ import {Polygon} from "@luciad/ria/shape/Polygon.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {FeatureLayer} from "@luciad/ria/view/feature/FeatureLayer.js";
+import {EVENT_HANDLED, EVENT_IGNORED} from "@luciad/ria/view/controller/HandleEventResult.js";
 import {Shape3DEditController} from "./Shape3DEditController.js";
 
 const REFERENCE = getReference("EPSG:4978");
@@ -65,5 +66,31 @@ describe("Shape3DEditController.cancel()", () => {
       expect(vertex.x).toBeCloseTo(x);
       expect(vertex.y).toBeCloseTo(y);
     });
+  });
+});
+
+// removeVertexAtIndex is the shared logic behind both the click-only "remove" handle and
+// double-click/double-tap removal (removeVertexNear) - exercised directly here rather than
+// through a simulated gesture, since hit-testing/positioning already has its own coverage
+// elsewhere (PointHandleLayout) and isn't what this behavior is about.
+describe("Shape3DEditController.removeVertexAtIndex()", () => {
+  it("removes the targeted vertex when the shape has more than its minimum vertex count", () => {
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+
+    const result = (controller as any).removeVertexAtIndex(1);
+
+    expect(result).toBe(EVENT_HANDLED);
+    expect((controller.shape as Polygon).pointCount).toBe(3);
+  });
+
+  it("is a no-op when the shape is already at its minimum vertex count", () => {
+    const point = createPoint(REFERENCE, [1, 2, 3]);
+    const controller = new Shape3DEditController(ShapeType.POINT, fakeLayer, {existingShape: point});
+
+    const result = (controller as any).removeVertexAtIndex(0);
+
+    expect(result).toBe(EVENT_IGNORED);
+    expect(controller.shape).toBe(point);
   });
 });

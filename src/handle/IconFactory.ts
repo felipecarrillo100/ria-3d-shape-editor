@@ -103,31 +103,55 @@ export function createXMarkIconImage(color: string, bgColor: string, sizePx = 9)
 }
 
 /**
- * A single dot (inactive - targets one vertex) or four dots arranged in a small square (active -
- * targets the whole shape) inside a circle - used for the whole-shape move/height toggle handle.
- * A plain pictogram rather than text, same reasoning as every other handle icon here.
+ * A single horizontal line inside a circle (the conventional "remove this one item" glyph, as
+ * opposed to a trash can, which reads more like "delete the whole thing") - used for the "remove
+ * this vertex" handle. Deliberately a different silhouette from `createXMarkIconImage` (used by
+ * `cancel`) so "discard the whole session" and "remove this one vertex" stay unambiguous even
+ * though both may share a similar warning color.
  */
-export function createShapeToggleIconImage(color: string, bgColor: string, active: boolean, sizePx = 9): string {
+export function createMinusIconImage(color: string, bgColor: string, sizePx = 9): string {
   const r = sizePx + 2;
   const size = r * 2;
   const c = size / 2;
-  const background = `<circle cx="${c}" cy="${c}" r="${r - 1}" fill="${bgColor}" stroke="${color}" stroke-width="1.5"/>`;
-  if (!active) {
-    return encodeSvg(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
-        background +
-        `<circle cx="${c}" cy="${c}" r="2.5" fill="${color}"/>` +
-        `</svg>`
-    );
-  }
-  const d = sizePx * 0.5;
+  const half = sizePx * 0.55;
   return encodeSvg(
       `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
-      background +
-      `<circle cx="${c - d}" cy="${c - d}" r="2" fill="${color}"/>` +
-      `<circle cx="${c + d}" cy="${c - d}" r="2" fill="${color}"/>` +
-      `<circle cx="${c - d}" cy="${c + d}" r="2" fill="${color}"/>` +
-      `<circle cx="${c + d}" cy="${c + d}" r="2" fill="${color}"/>` +
+      `<circle cx="${c}" cy="${c}" r="${r - 1}" fill="${bgColor}" stroke="${color}" stroke-width="1.5"/>` +
+      `<line x1="${c - half}" y1="${c}" x2="${c + half}" y2="${c}" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>` +
+      `</svg>`
+  );
+}
+
+/**
+ * The actual keyboard-Shift glyph (⇧) - one outlined arrow shape (a wide triangular head merging
+ * directly into a narrower rectangular stem, as a single polygon outline, not filled solid), not a
+ * thin line with a separate arrowhead - inside a circle, used for the whole-shape move/height
+ * toggle handle. On/off is conveyed entirely by the color and size the caller passes in (muted and
+ * small when off, a saturated "indicator light" green and bigger when on - see HandleStyles.ts),
+ * not by the glyph itself changing shape.
+ */
+export function createShiftUpArrowIconImage(color: string, bgColor: string, sizePx = 9): string {
+  const r = sizePx + 2;
+  const size = r * 2;
+  const c = size / 2;
+  const headHalf = sizePx * 0.55;
+  const stemHalf = sizePx * 0.28;
+  const top = c - sizePx * 0.75;
+  const headBase = c - sizePx * 0.1;
+  const stemBottom = c + sizePx * 0.65;
+  const points = [
+    [c, top],
+    [c + headHalf, headBase],
+    [c + stemHalf, headBase],
+    [c + stemHalf, stemBottom],
+    [c - stemHalf, stemBottom],
+    [c - stemHalf, headBase],
+    [c - headHalf, headBase],
+  ].map(([x, y]) => `${x},${y}`).join(" ");
+  return encodeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+      `<circle cx="${c}" cy="${c}" r="${r - 1}" fill="${bgColor}" stroke="${color}" stroke-width="1.5"/>` +
+      `<polygon points="${points}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round"/>` +
       `</svg>`
   );
 }
