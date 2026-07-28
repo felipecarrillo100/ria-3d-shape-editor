@@ -40,7 +40,15 @@ const HANDLE_BG = "rgba(30,30,30,0.55)";
 // Deliberately more saturated than HEIGHT_COLOR above, so an occluded height handle still reads
 // as a clear, distinct warning rather than just "still kind of orange."
 const OCCLUDED_COLOR = "rgb(255,102,0)";
-const OCCLUDED_STROKE = "rgb(120,45,0)";
+// Deliberately near-black rather than a darker shade of the same orange hue - every non-occluded
+// icon pair in this file contrasts a bright/light fill against a dark, low-saturation stroke (e.g.
+// VERTEX_COLOR/VERTEX_STROKE, FOCUSED_COLOR/FOCUSED_STROKE), and OCCLUDED_COLOR/OCCLUDED_STROKE
+// needs the same lightness contrast to read as two distinct colors instead of "two shades of orange."
+const OCCLUDED_STROKE = "rgb(40,20,10)";
+// Shape-body geometry (the polygon/line being edited) must always render beneath every handle/icon,
+// which all keep the default zOrder (0, unset) - LuciadRIA paints lower zOrder first, so a negative
+// value here is what actually guarantees that, independent of occlusionMode or draw-call order.
+const SHAPE_BODY_Z_ORDER = -1;
 
 // Occlusion-aware icons are drawn TWICE, back to back, at the same position - once with
 // occlusionMode: VISIBLE_ONLY (normal color, shown only where nothing obscures it) and once with
@@ -48,11 +56,12 @@ const OCCLUDED_STROKE = "rgb(120,45,0)";
 // own depth test picks whichever actually applies each frame, with no manual raycasting needed.
 // This is the exact idiom LuciadRIA's own toolbox uses for the same purpose (confirmed directly:
 // @luciad/ria-toolbox-ria/geolocation/HandleStyles.ts's MAIN_STROKE_STYLE/MAIN_STROKE_OCCLUDED_STYLE
-// pair, drawn together in AltitudeHandleSupport.ts's drawBody). Deliberately scoped to just the
-// vertex/free handle and the drag-position ("current") diamond - the two things that actually
-// represent the shape's real position. Move/height/finish/cancel/drag-start all keep
-// occlusionMode: ALWAYS_VISIBLE with no occluded variant - they're fixed-offset UI affordances,
-// not the shape's own geometry, so an occlusion cue on them isn't wanted.
+// pair, drawn together in AltitudeHandleSupport.ts's drawBody). Applied to the vertex/free handle,
+// the drag-position ("current") diamond, and the shape's own body/closing-segment preview (see
+// PREVIEW_SHAPE_STYLE/PREVIEW_CLOSING_SEGMENT_STYLE below) - all things that represent the shape's
+// real position or geometry. Move/height/finish/cancel/drag-start all keep occlusionMode:
+// ALWAYS_VISIBLE with no occluded variant - they're fixed-offset UI affordances, not the shape's
+// own geometry, so an occlusion cue on them isn't wanted.
 
 export const VERTEX_DEFAULT_ICON_STYLE: IconStyle = {
   url: createCircleIconImage(VERTEX_COLOR, VERTEX_STROKE, 5),
@@ -258,14 +267,31 @@ export const GUIDE_LINE_STYLE: ShapeStyle = {
 export const PREVIEW_SHAPE_STYLE: ShapeStyle = {
   stroke: {color: "rgb(255,255,255)", width: 2},
   fill: {color: "rgba(255,255,255,0.15)"},
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
+  zOrder: SHAPE_BODY_Z_ORDER,
+};
+
+export const PREVIEW_SHAPE_OCCLUDED_STYLE: ShapeStyle = {
+  stroke: {color: OCCLUDED_COLOR, width: 2},
+  fill: {color: "rgba(255,102,0,0.15)"},
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+  zOrder: SHAPE_BODY_Z_ORDER,
 };
 
 export const PREVIEW_CLOSING_SEGMENT_STYLE: ShapeStyle = {
   stroke: {color: "rgba(255,255,255,0.6)", width: 1, dash: [6, 4]},
-  occlusionMode: OcclusionMode.ALWAYS_VISIBLE,
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
+  zOrder: SHAPE_BODY_Z_ORDER,
+};
+
+export const PREVIEW_CLOSING_SEGMENT_OCCLUDED_STYLE: ShapeStyle = {
+  stroke: {color: "rgba(255,102,0,0.6)", width: 1, dash: [6, 4]},
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+  zOrder: SHAPE_BODY_Z_ORDER,
 };
 
 // A minimalistic wireframe grid, drawn as a VISIBLE_ONLY/OCCLUDED_ONLY pair, same general idiom

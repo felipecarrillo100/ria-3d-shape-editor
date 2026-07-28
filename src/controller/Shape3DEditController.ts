@@ -58,7 +58,9 @@ import {
   MOVE_HANDLE_SHIFT_ICON_STYLE,
   MOVE_PLANE_OCCLUDED_STYLE,
   MOVE_PLANE_STYLE,
+  PREVIEW_CLOSING_SEGMENT_OCCLUDED_STYLE,
   PREVIEW_CLOSING_SEGMENT_STYLE,
+  PREVIEW_SHAPE_OCCLUDED_STYLE,
   PREVIEW_SHAPE_STYLE,
   VERTEX_DEFAULT_ICON_STYLE,
   VERTEX_DEFAULT_OCCLUDED_ICON_STYLE,
@@ -820,6 +822,7 @@ export class Shape3DEditController extends Controller {
       return;
     }
     geoCanvas.drawShape(shape, PREVIEW_SHAPE_STYLE);
+    geoCanvas.drawShape(shape, PREVIEW_SHAPE_OCCLUDED_STYLE);
     const count = this._strategy.vertexCount(shape);
     for (let i = 0; i < count; i++) {
       const vertex = this._strategy.getVertex(shape, i);
@@ -828,7 +831,9 @@ export class Shape3DEditController extends Controller {
     }
     const closingSegment = this._strategy.getPreviewClosingSegment(shape);
     if (closingSegment) {
-      geoCanvas.drawShape(createPolyline(shape.reference!, closingSegment), PREVIEW_CLOSING_SEGMENT_STYLE);
+      const closingSegmentShape = createPolyline(shape.reference!, closingSegment);
+      geoCanvas.drawShape(closingSegmentShape, PREVIEW_CLOSING_SEGMENT_STYLE);
+      geoCanvas.drawShape(closingSegmentShape, PREVIEW_CLOSING_SEGMENT_OCCLUDED_STYLE);
     }
   }
 
@@ -870,6 +875,7 @@ export class Shape3DEditController extends Controller {
     }
     if (shape.type !== ShapeType.POINT) {
       geoCanvas.drawShape(shape, PREVIEW_SHAPE_STYLE);
+      geoCanvas.drawShape(shape, PREVIEW_SHAPE_OCCLUDED_STYLE);
     }
     const count = this._strategy.vertexCount(shape);
     for (let i = 0; i < count; i++) {
