@@ -285,18 +285,18 @@ export const MOVE_PLANE_OCCLUDED_STYLE: ShapeStyle = {
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
-// A vertical line drawn during height/free drags, from the current position downward - styled as
+// A vertical line drawn during height/move drags, from the current position downward - styled as
 // the same VISIBLE_ONLY/OCCLUDED_ONLY pair, so the portion that passes into/behind terrain or a
 // mesh shows in OCCLUDED_COLOR. This needs no raycasting at all: the drag's own direction is
 // already the correct true-vertical axis, and RIA's own depth test is what actually reveals
 // "this has reached the ground/a building," not any computed intersection.
-export const HEIGHT_DROP_LINE_STYLE: ShapeStyle = {
+export const DROP_LINE_STYLE: ShapeStyle = {
   stroke: {color: DROP_LINE_COLOR, width: 2},
   occlusionMode: OcclusionMode.VISIBLE_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };
 
-export const HEIGHT_DROP_LINE_OCCLUDED_STYLE: ShapeStyle = {
+export const DROP_LINE_OCCLUDED_STYLE: ShapeStyle = {
   stroke: {color: OCCLUDED_COLOR, width: 2},
   occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,

@@ -38,14 +38,14 @@ import {formatLength, UomFamily} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
   CANCEL_HANDLE_FOCUSED_ICON_STYLE,
+  DROP_LINE_OCCLUDED_STYLE,
+  DROP_LINE_STYLE,
   FINISH_HANDLE_DEFAULT_ICON_STYLE,
   FINISH_HANDLE_FOCUSED_ICON_STYLE,
   GUIDE_END_ICON_STYLE,
   GUIDE_END_OCCLUDED_ICON_STYLE,
   GUIDE_LINE_STYLE,
   GUIDE_START_ICON_STYLE,
-  HEIGHT_DROP_LINE_OCCLUDED_STYLE,
-  HEIGHT_DROP_LINE_STYLE,
   HEIGHT_HANDLE_DEFAULT_ICON_STYLE,
   HEIGHT_HANDLE_FOCUSED_ICON_STYLE,
   HEIGHT_HANDLE_SHIFT_ICON_STYLE,
@@ -113,11 +113,12 @@ export interface Shape3DEditControllerOptions {
    */
   showPlane?: boolean;
   /**
-   * While dragging the height handle, draw a vertical line from the drag's start position all the
-   * way down to Earth's center, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so the portion that
-   * passes into/behind terrain or a mesh shows distinctly - a cheap, always-correct way to notice
-   * "this has reached the ground/a building" without any raycasting, regardless of how high above
-   * the surface the vertex is or how zoomed in/out the camera is. Default false.
+   * While dragging the height or move handle, draw a vertical line from the vertex's current
+   * position all the way down to Earth's center, styled as a VISIBLE_ONLY/OCCLUDED_ONLY pair so
+   * the portion that passes into/behind terrain or a mesh shows distinctly - a cheap,
+   * always-correct way to notice "this has reached the ground/a building" without any raycasting,
+   * regardless of how high above the surface the vertex is or how zoomed in/out the camera is.
+   * Default false.
    */
   showDropLine?: boolean;
 }
@@ -946,24 +947,27 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawShape(grid, MOVE_PLANE_OCCLUDED_STYLE);
     }
 
-    // Anchored to the drag's start position, not the live dragged position - it stays planted
-    // where the vertex originally was, for the whole drag, unlike the yellow guide line (which
-    // tracks the live position). Runs all the way to the EPSG:4978 origin - Earth's center - since
-    // that's where the drag's own true-vertical axis (the point's own ECEF vector) leads; no
-    // raycasting needed, and no computed ground intersection either: RIA's own depth test is what
-    // actually reveals "this has reached the ground/a building," via the OCCLUDED_ONLY portion of
-    // the line. Going the full distance (rather than some camera- or scene-relative fraction of it)
-    // guarantees the line always crosses whatever terrain/mesh is beneath the vertex, no matter how
-    // high above the surface it's dragged or how zoomed in/out the camera is. Restricted to
-    // "height" only - "move" is about horizontal position with its own plane-based occlusion cue,
-    // and "free" is already continuously re-snapped to a surface, so a ground-line adds nothing.
-    if (this._showDropLine && handle?.dragStartWGS84 && handle.kind === "height") {
-      const topEpsg4978 = WGS84_TO_EPSG4978.transform(handle.dragStartWGS84);
+    // Anchored to the drag's start position for "height" (X/Y is frozen there, so the start
+    // position is already the right spot) but to the live dragged position for "move" (X/Y is
+    // exactly what's changing, so anchoring to the start would leave the line stuck where the drag
+    // began) - the same live anchor the reference-plane grid above already uses. Either way, the
+    // line runs all the way to the EPSG:4978 origin - Earth's center - since that's where the
+    // anchor's own true-vertical axis (its own ECEF vector) leads; no raycasting needed, and no
+    // computed ground intersection either: RIA's own depth test is what actually reveals "this has
+    // reached the ground/a building," via the OCCLUDED_ONLY portion of the line. Going the full
+    // distance (rather than some camera- or scene-relative fraction of it) guarantees the line
+    // always crosses whatever terrain/mesh is beneath the vertex, no matter how high above the
+    // surface it's dragged or how zoomed in/out the camera is. "free" stays excluded - it's already
+    // continuously re-snapped to a surface, so a ground-line adds nothing there.
+    const dropLineAnchorWGS84 = handle?.kind === "height" ? handle.dragStartWGS84 :
+        handle?.kind === "move" ? handle.currentWGS84 : null;
+    if (this._showDropLine && dropLineAnchorWGS84) {
+      const topEpsg4978 = WGS84_TO_EPSG4978.transform(dropLineAnchorWGS84);
       const earthCenterEpsg4978 = {x: 0, y: 0, z: 0};
       const dropLine = createPolyline(EPSG_4978,
           [toPoint(EPSG_4978, topEpsg4978), toPoint(EPSG_4978, earthCenterEpsg4978)]);
-      geoCanvas.drawShape(dropLine, HEIGHT_DROP_LINE_STYLE);
-      geoCanvas.drawShape(dropLine, HEIGHT_DROP_LINE_OCCLUDED_STYLE);
+      geoCanvas.drawShape(dropLine, DROP_LINE_STYLE);
+      geoCanvas.drawShape(dropLine, DROP_LINE_OCCLUDED_STYLE);
     }
   }
 
