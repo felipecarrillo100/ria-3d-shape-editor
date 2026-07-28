@@ -2,7 +2,7 @@
 // minimalistic wireframe grid, per feedback). Same "tangent-to-up, two arbitrary orthogonal
 // directions via cross products" technique as before (also used for camera-right in
 // PointHandleLayout.ts), just producing grid line segments instead of 4 corners.
-import {Vector3} from "@luciad/ria/util/Vector3.js";
+import type {Vector3} from "@luciad/ria/util/Vector3.js";
 import {add, cross, normalize, scale} from "../math/Vector3Util.js";
 
 /**

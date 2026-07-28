@@ -8,7 +8,7 @@ import {Point} from "@luciad/ria/shape/Point.js";
 import {Polygon} from "@luciad/ria/shape/Polygon.js";
 import {Polyline} from "@luciad/ria/shape/Polyline.js";
 import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
-import {ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
+import type {ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
 
 /**
  * Returns the index of the vertex of `shape` that is closest to `viewPoint` in screen space, if it

@@ -1,6 +1,6 @@
 {
   "name": "ria-3d-shape-editor",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Generic Point/LineString/Polygon create+edit controller for LuciadRIA with independent per-vertex height (Z) editing",
   "type": "module",
   "main": "./lib/index.js",

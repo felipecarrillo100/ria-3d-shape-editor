@@ -4,7 +4,7 @@ import {createPolygon} from "@luciad/ria/shape/ShapeFactory.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 import {ProgrammingError} from "@luciad/ria/error/ProgrammingError.js";
-import {ShapeEditStrategy} from "./ShapeEditStrategy.js";
+import type {ShapeEditStrategy} from "./ShapeEditStrategy.js";
 
 // LuciadRIA's Polygon is implicitly closed by its point list (unlike GeoJSON's convention of
 // duplicating the first point as the last) - confirmed from Polygon.d.ts, which has no notion of a

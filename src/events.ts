@@ -1,4 +1,4 @@
-import {EditableShape} from "./strategy/ShapeEditStrategy.js";
+import type {EditableShape} from "./strategy/ShapeEditStrategy.js";
 
 export const SHAPE_CREATED_EVENT = "ShapeCreated";
 export const SHAPE_CHANGED_EVENT = "ShapeChanged";

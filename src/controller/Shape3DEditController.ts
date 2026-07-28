@@ -1,12 +1,12 @@
 import {Controller} from "@luciad/ria/view/controller/Controller.js";
 import {WebGLMap} from "@luciad/ria/view/WebGLMap.js";
 import {CursorHandle} from "@luciad/ria/view/CursorManager.js";
-import {GestureEvent} from "@luciad/ria/view/input/GestureEvent.js";
+import type {GestureEvent} from "@luciad/ria/view/input/GestureEvent.js";
 import {GestureEventType} from "@luciad/ria/view/input/GestureEventType.js";
 import {KeyEvent} from "@luciad/ria/view/input/KeyEvent.js";
 import {EVENT_HANDLED, EVENT_IGNORED, HandleEventResult} from "@luciad/ria/view/controller/HandleEventResult.js";
-import {GeoCanvas} from "@luciad/ria/view/style/GeoCanvas.js";
-import {LabelCanvas} from "@luciad/ria/view/style/LabelCanvas.js";
+import type {GeoCanvas} from "@luciad/ria/view/style/GeoCanvas.js";
+import type {LabelCanvas} from "@luciad/ria/view/style/LabelCanvas.js";
 import {Point} from "@luciad/ria/shape/Point.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {createArcBand, createExtrudedShape, createPoint, createPolyline, createShapeList} from "@luciad/ria/shape/ShapeFactory.js";
@@ -16,15 +16,15 @@ import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
 import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
 import {createEllipsoidalGeodesy} from "@luciad/ria/geodesy/GeodesyFactory.js";
 import {EventedSupport} from "@luciad/ria/util/EventedSupport.js";
-import {Handle} from "@luciad/ria/util/Evented.js";
+import type {Handle} from "@luciad/ria/util/Evented.js";
 import {ProgrammingError} from "@luciad/ria/error/ProgrammingError.js";
 
-import {EditableShape, ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
-import {createShapeEditStrategy, SupportedShapeType} from "../strategy/createShapeEditStrategy.js";
+import type {EditableShape, ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
+import {createShapeEditStrategy, type SupportedShapeType} from "../strategy/createShapeEditStrategy.js";
 import {CreationSession} from "./CreationSession.js";
 import {Phase} from "./Phase.js";
 import {nextActiveVertexIndex} from "./nextActiveVertexIndex.js";
-import {EditHandle, HandleKind} from "../handle/EditHandle.js";
+import {EditHandle, type HandleKind} from "../handle/EditHandle.js";
 import {
   azimuthToGroundProjectedPoint,
   freeMovePointInteraction,
@@ -33,12 +33,12 @@ import {
   verticalMovePointInteraction,
 } from "../handle/HandleInteractions.js";
 import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
-import {computePointHandlePositions, PointHandlePositions} from "../handle/PointHandleLayout.js";
+import {computePointHandlePositions, type PointHandlePositions} from "../handle/PointHandleLayout.js";
 import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js";
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
-import {HtmlToolbar, HtmlToolbarLabels} from "../handle/HtmlToolbar.js";
+import {HtmlToolbar, type HtmlToolbarLabels} from "../handle/HtmlToolbar.js";
 import {add, distance, normalize, sub, toPoint} from "../math/Vector3Util.js";
-import {formatLength, UomFamily} from "../uom/formatLength.js";
+import {formatLength, type UomFamily} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
   CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
@@ -103,9 +103,9 @@ import {
   SHAPE_CHANGED_EVENT,
   SHAPE_CREATED_EVENT,
   SHAPE_EDITING_FINISHED_EVENT,
-  ShapeChangedEvent,
-  ShapeCreatedEvent,
-  ShapeEditingFinishedEvent,
+  type ShapeChangedEvent,
+  type ShapeCreatedEvent,
+  type ShapeEditingFinishedEvent,
 } from "../events.js";
 
 const WGS_84 = getReference("CRS:84");

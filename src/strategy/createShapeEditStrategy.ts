@@ -1,6 +1,6 @@
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {ProgrammingError} from "@luciad/ria/error/ProgrammingError.js";
-import {ShapeEditStrategy} from "./ShapeEditStrategy.js";
+import type {ShapeEditStrategy} from "./ShapeEditStrategy.js";
 import {PointEditStrategy} from "./PointEditStrategy.js";
 import {LineStringEditStrategy} from "./LineStringEditStrategy.js";
 import {PolygonEditStrategy} from "./PolygonEditStrategy.js";

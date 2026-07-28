@@ -24,7 +24,7 @@
 // package actually calls (no rotation/angle/plane-projection/box-face-intersection helpers).
 import {createPoint} from "@luciad/ria/shape/ShapeFactory.js";
 import {Point} from "@luciad/ria/shape/Point.js";
-import {Vector3} from "@luciad/ria/util/Vector3.js";
+import type {Vector3} from "@luciad/ria/util/Vector3.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 
 /**

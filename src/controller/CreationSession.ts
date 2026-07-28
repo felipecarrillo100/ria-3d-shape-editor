@@ -10,7 +10,7 @@ import {WebGLMap} from "@luciad/ria/view/WebGLMap.js";
 import {Point} from "@luciad/ria/shape/Point.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
-import {EditableShape, ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
+import type {EditableShape, ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
 import {raycastClosestSurface} from "../handle/raycastClosestSurface.js";
 
 export type CreationClickResult = "placed" | "finished" | "ignored";

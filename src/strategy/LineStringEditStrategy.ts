@@ -4,7 +4,7 @@ import {createPolyline} from "@luciad/ria/shape/ShapeFactory.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 import {ProgrammingError} from "@luciad/ria/error/ProgrammingError.js";
-import {ShapeEditStrategy} from "./ShapeEditStrategy.js";
+import type {ShapeEditStrategy} from "./ShapeEditStrategy.js";
 
 export class LineStringEditStrategy implements ShapeEditStrategy<Polyline> {
   readonly shapeType = ShapeType.POLYLINE;

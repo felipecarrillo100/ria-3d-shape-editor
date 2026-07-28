@@ -28,7 +28,7 @@ import {Camera} from "@luciad/ria/view/camera/Camera.js";
 import {PerspectiveCamera} from "@luciad/ria/view/camera/PerspectiveCamera.js";
 import {DEG2RAD, RAD2DEG} from "./MathUtil.js";
 import {addArray, cross, normalize, scale} from "./Vector3Util.js";
-import {Vector3} from "@luciad/ria/util/Vector3.js";
+import type {Vector3} from "@luciad/ria/util/Vector3.js";
 
 export interface Vector2 {
   x: number;

@@ -1,8 +1,8 @@
 // Fresh code - not derived from @luciad/ria-toolbox-geolocation/HandleStyles.ts (that file's actual
 // visual values aren't reused; only the general idea of "guide line + endpoint markers" is, per
 // Notes3DEdit.md's decision log).
-import {IconStyle} from "@luciad/ria/view/style/IconStyle.js";
-import {ShapeStyle} from "@luciad/ria/view/style/ShapeStyle.js";
+import type {IconStyle} from "@luciad/ria/view/style/IconStyle.js";
+import type {ShapeStyle} from "@luciad/ria/view/style/ShapeStyle.js";
 import {OcclusionMode} from "@luciad/ria/view/style/OcclusionMode.js";
 import {DrapeTarget} from "@luciad/ria/view/style/DrapeTarget.js";
 import {
