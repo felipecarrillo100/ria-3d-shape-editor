@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@luciad/ria": "^2026.0.9"
+    "@luciad/ria": "^2026.0.10"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
