@@ -101,3 +101,33 @@ export function createXMarkIconImage(color: string, bgColor: string, sizePx = 9)
       `</svg>`
   );
 }
+
+/**
+ * A single dot (inactive - targets one vertex) or four dots arranged in a small square (active -
+ * targets the whole shape) inside a circle - used for the whole-shape move/height toggle handle.
+ * A plain pictogram rather than text, same reasoning as every other handle icon here.
+ */
+export function createShapeToggleIconImage(color: string, bgColor: string, active: boolean, sizePx = 9): string {
+  const r = sizePx + 2;
+  const size = r * 2;
+  const c = size / 2;
+  const background = `<circle cx="${c}" cy="${c}" r="${r - 1}" fill="${bgColor}" stroke="${color}" stroke-width="1.5"/>`;
+  if (!active) {
+    return encodeSvg(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+        background +
+        `<circle cx="${c}" cy="${c}" r="2.5" fill="${color}"/>` +
+        `</svg>`
+    );
+  }
+  const d = sizePx * 0.5;
+  return encodeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+      background +
+      `<circle cx="${c - d}" cy="${c - d}" r="2" fill="${color}"/>` +
+      `<circle cx="${c + d}" cy="${c - d}" r="2" fill="${color}"/>` +
+      `<circle cx="${c - d}" cy="${c + d}" r="2" fill="${color}"/>` +
+      `<circle cx="${c + d}" cy="${c + d}" r="2" fill="${color}"/>` +
+      `</svg>`
+  );
+}

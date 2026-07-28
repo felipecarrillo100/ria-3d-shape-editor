@@ -8,7 +8,7 @@ import {Point} from "@luciad/ria/shape/Point.js";
 // handle either inserts a real vertex and continues as an ordinary "free"/"move"/"height" drag on
 // that new vertex, or - with Shift held - shifts the whole shape without ever inserting one; the
 // midpoint itself never becomes the handle's own kind either way.
-export type HandleKind = "free" | "move" | "height" | "finish" | "cancel" | "midpoint";
+export type HandleKind = "free" | "move" | "height" | "finish" | "cancel" | "midpoint" | "shiftToggle";
 
 /**
  * Tracks the live state of one draggable handle (free/move/height) while it targets a particular
@@ -30,6 +30,13 @@ export class EditHandle {
   shiftWholeShape = false;
   /** Every vertex's own WGS84 position at drag start - only populated when shiftWholeShape. */
   allVerticesStartWGS84: Point[] | null = null;
+
+  /**
+   * True if this drag was started by a touch input, not a mouse - locked for the whole gesture.
+   * Used to offset the dragged icon's drawn position above the fingertip (so it isn't hidden
+   * underneath it) and to gate touch-only feedback like haptics.
+   */
+  isTouch = false;
 
   constructor(kind: HandleKind) {
     this.kind = kind;

@@ -2,14 +2,13 @@ import {Controller} from "@luciad/ria/view/controller/Controller.js";
 import {WebGLMap} from "@luciad/ria/view/WebGLMap.js";
 import {GestureEvent} from "@luciad/ria/view/input/GestureEvent.js";
 import {GestureEventType} from "@luciad/ria/view/input/GestureEventType.js";
-import {ModifierType} from "@luciad/ria/view/input/ModifierType.js";
 import {KeyEvent} from "@luciad/ria/view/input/KeyEvent.js";
 import {EVENT_HANDLED, EVENT_IGNORED, HandleEventResult} from "@luciad/ria/view/controller/HandleEventResult.js";
 import {GeoCanvas} from "@luciad/ria/view/style/GeoCanvas.js";
 import {LabelCanvas} from "@luciad/ria/view/style/LabelCanvas.js";
 import {Point} from "@luciad/ria/shape/Point.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
-import {createPolyline, createShapeList} from "@luciad/ria/shape/ShapeFactory.js";
+import {createPoint, createPolyline, createShapeList} from "@luciad/ria/shape/ShapeFactory.js";
 import {FeatureLayer} from "@luciad/ria/view/feature/FeatureLayer.js";
 import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
@@ -33,6 +32,7 @@ import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
 import {computePointHandlePositions, PointHandlePositions} from "../handle/PointHandleLayout.js";
 import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js";
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
+import {HtmlToolbar, HtmlToolbarLabels} from "../handle/HtmlToolbar.js";
 import {add, distance, normalize, sub, toPoint} from "../math/Vector3Util.js";
 import {formatLength, UomFamily} from "../uom/formatLength.js";
 import {
@@ -74,6 +74,10 @@ import {
   PREVIEW_CLOSING_SEGMENT_STYLE,
   PREVIEW_SHAPE_OCCLUDED_STYLE,
   PREVIEW_SHAPE_STYLE,
+  SHIFT_TOGGLE_OFF_ICON_STYLE,
+  SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE,
+  SHIFT_TOGGLE_ON_ICON_STYLE,
+  SHIFT_TOGGLE_ON_OCCLUDED_ICON_STYLE,
   VERTEX_DEFAULT_ICON_STYLE,
   VERTEX_DEFAULT_OCCLUDED_ICON_STYLE,
   VERTEX_FOCUSED_ICON_STYLE,
@@ -96,9 +100,22 @@ const WGS84_TO_EPSG4978 = createTransformation(WGS_84, EPSG_4978);
 const EPSG4978_TO_WGS84 = createTransformation(EPSG_4978, WGS_84);
 
 const DEFAULT_VERTEX_HIT_PIXEL_TOLERANCE = 12;
+// ~48px tap diameter - roughly Apple/Material's ~44-48px touch target guidance, vs. the ~24px
+// diameter the plain default above gives a mouse pointer. Applied as a floor, not a fixed
+// replacement (see effectiveHitTolerance) - an explicitly configured larger tolerance is never
+// shrunk back down for touch.
+const DEFAULT_TOUCH_VERTEX_HIT_PIXEL_TOLERANCE = 24;
+// How far above the actual touch point the actively-dragged icon is drawn, so a finger never
+// hides the very thing it's dragging - the same "handle floats above your fingertip" idiom
+// iOS/Android text-selection handles use. Not needed for a mouse, which has its own visible cursor
+// off to the side of whatever it's pointing at.
+const TOUCH_DRAG_OFFSET_PIXELS = 40;
+// Short and identical for grab/drop - just enough to register as a deliberate cue, not a buzz.
+const HAPTIC_PULSE_MS = 10;
 const DEFAULT_UOM: UomFamily = "metric";
 const DEFAULT_SHOW_PLANE = false;
 const DEFAULT_SHOW_DROP_LINE = false;
+const DEFAULT_HTML_TOOLBAR = false;
 // Larger than PointHandleLayout.ts's own DEFAULT_HANDLE_OFFSET_FACTOR (0.04) - this plane is a
 // visible ground reference, not a small icon offset, so it needs to read clearly at a glance.
 const MOVE_PLANE_SIZE_FACTOR = 0.15;
@@ -135,6 +152,36 @@ export interface Shape3DEditControllerOptions {
    * Default false.
    */
   showDropLine?: boolean;
+  /**
+   * When set (`true`, or an options object), renders Finish/Cancel as HTML icon buttons (X/
+   * checkmark, matching the GeoCanvas-drawn icons - not text, so nothing here needs translation)
+   * - and, while editing, a live/editable height input (a bare "m" unit suffix, also
+   * translation-free) for the active vertex - instead of the GeoCanvas-drawn checkmark/X icons.
+   * Small, 3D-anchored icons are harder to hit reliably with a finger than a fixed on-screen
+   * button, and can end up tiny or off-screen at a distance/bad angle - this is meant as a
+   * touch-friendly *alternative*, not an addition: whichever is active, the other is not drawn/
+   * hit-tested at all (see drawFullHandleSet/fullHandleCandidates), so there's never a duplicate or
+   * an invisible-but-still-clickable icon.
+   *
+   * `labels` only ever supplies `aria-label`/`title` attributes (for screen readers, which can't
+   * read an icon) - never visible button text - so a consuming app only needs to translate these
+   * three short phrases, not full UI copy:
+   * ```
+   * { labels: { cancel: "Annuler", finish: "Terminer", height: "Hauteur" } }
+   * ```
+   * Every element also gets a stable, documented CSS class name (`.ria-3d-shape-editor-toolbar`,
+   * `.ria-3d-shape-editor-btn-finish`, `.ria-3d-shape-editor-btn-cancel`,
+   * `.ria-3d-shape-editor-height-input`, `.ria-3d-shape-editor-height-unit`) with only minimal
+   * inline default styling, so a consuming app can restyle it freely via CSS specificity - the same
+   * convention already used for the live drag-distance label.
+   *
+   * Whether the toolbar exists at all is constructor-only - not settable via `updateController`,
+   * since toggling it live would mean tearing down/recreating DOM mid-session for comparatively
+   * little benefit. `labels`, however, CAN be updated live via `updateController` (e.g. a live
+   * language switcher) - those are just attribute text on already-existing elements, not new DOM.
+   * Default false.
+   */
+  htmlToolbar?: boolean | {labels?: HtmlToolbarLabels};
 }
 
 /**
@@ -184,6 +231,16 @@ export class Shape3DEditController extends Controller {
   private _uom: UomFamily;
   private _showPlane: boolean;
   private _showDropLine: boolean;
+  /** Constructor-only - see the option's own doc comment for why. */
+  private readonly _htmlToolbar: boolean;
+  /**
+   * Only meaningful when `_htmlToolbar`. Not readonly - unlike `_htmlToolbar` itself (which stays
+   * constructor-only, see its own doc comment), labels are plain attribute text on already-existing
+   * elements, not new DOM, so `updateController` can safely update these live, mid-session.
+   */
+  private _htmlToolbarLabels: HtmlToolbarLabels | undefined;
+  /** Created in onActivate/destroyed in onDeactivate, only when `_htmlToolbar`. */
+  private _toolbar: HtmlToolbar | null = null;
 
   private _phase: Phase;
   private _shape: EditableShape | null;
@@ -196,11 +253,20 @@ export class Shape3DEditController extends Controller {
   private _hoveredHandleKind: HandleKind | null = null;
   private _activeHandle: EditHandle | null = null;
   /**
-   * Whether Shift is currently held, tracked continuously on hover (not just at drag-start) so the
-   * move/height handle icons can grow as soon as Shift is pressed - a discoverability cue for
-   * "dragging this now shifts the whole shape," before the user ever starts dragging.
+   * Whether the current drag gesture's "does this grab a handle (or the shape body)" decision has
+   * already been made, on its first DRAG frame - reset on DRAG_END/MOVE (both signal no drag is in
+   * progress). See handleEditDrag's own comment for why this must only ever be decided once per
+   * gesture, not re-evaluated against the live cursor position on every frame.
    */
-  private _shiftHeld = false;
+  private _dragGestureChecked = false;
+  /**
+   * Whether whole-shape move/height mode is toggled on - set only by clicking/tapping the
+   * dedicated shiftToggle handle (see handleEditClick). Sticky and global: it persists across
+   * drags and across switching which vertex/midpoint is active, until explicitly toggled off
+   * again - not reset anywhere else. Works identically for mouse and touch; there is no keyboard
+   * modifier equivalent (Shift+drag was removed in favor of this single, discoverable mechanism).
+   */
+  private _shiftWholeShapeToggled = false;
   /** Set right before `map.controller = null` by endEditing(); read once by onDeactivate. */
   private _pendingConfirmed = false;
   /**
@@ -247,6 +313,8 @@ export class Shape3DEditController extends Controller {
     this._uom = options?.uom ?? DEFAULT_UOM;
     this._showPlane = options?.showPlane ?? DEFAULT_SHOW_PLANE;
     this._showDropLine = options?.showDropLine ?? DEFAULT_SHOW_DROP_LINE;
+    this._htmlToolbar = !!(options?.htmlToolbar ?? DEFAULT_HTML_TOOLBAR);
+    this._htmlToolbarLabels = typeof options?.htmlToolbar === "object" ? options.htmlToolbar.labels : undefined;
     this._eventedSupport = new EventedSupport(
         [SHAPE_CREATED_EVENT, SHAPE_CHANGED_EVENT, SHAPE_EDITING_FINISHED_EVENT], true);
 
@@ -274,6 +342,11 @@ export class Shape3DEditController extends Controller {
    * state). The motivating case is `uom`: a UI toggle switching units live, possibly mid-drag.
    * None of these options interact with in-progress drag/shape state, so there's no
    * session-corruption risk to guard against.
+   *
+   * `htmlToolbar` is special-cased: only its `labels` (if given as an options object) are applied
+   * live - e.g. a language switcher calling this on locale change - matching the option's own doc
+   * comment. Whether the toolbar exists at all was decided once, at construction; passing a plain
+   * boolean here is a no-op, since there's no DOM lifecycle change to make.
    */
   updateController(options: Partial<Shape3DEditControllerOptions>): void {
     if (options.vertexHitPixelTolerance !== undefined) {
@@ -287,6 +360,10 @@ export class Shape3DEditController extends Controller {
     }
     if (options.showDropLine !== undefined) {
       this._showDropLine = options.showDropLine;
+    }
+    if (typeof options.htmlToolbar === "object") {
+      this._htmlToolbarLabels = options.htmlToolbar.labels;
+      this._toolbar?.setLabels(this._htmlToolbarLabels);
     }
     this.invalidate();
   }
@@ -364,9 +441,31 @@ export class Shape3DEditController extends Controller {
     this.emitShapeChanged();
   }
 
+  /**
+   * Ends the current editing session with `confirmed: true` - the programmatic equivalent of
+   * clicking the finish/checkmark handle. No-op unless currently editing (mirrors `cancel()`'s own
+   * phase gating). Before this existed, `confirmed: true` was only reachable by clicking the
+   * built-in checkmark icon - this is what lets app-level UI (e.g. the `htmlToolbar` option's Done
+   * button, or a caller's own custom UI) end editing the exact same way, without needing
+   * `endEditing` itself to be public.
+   */
+  confirm(): void {
+    if (this._phase !== Phase.EDITING || !this._shape) {
+      return;
+    }
+    this.endEditing(true);
+  }
+
   override onActivate(map: WebGLMap): void {
     super.onActivate(map);
     this._mapChangeHandle = map.on("MapChange", () => this.invalidate());
+    if (this._htmlToolbar) {
+      this._toolbar = new HtmlToolbar(map.domNode, {
+        onCancel: () => this.cancelSession(),
+        onFinish: () => this._phase === Phase.CREATING ? this.finish() : this.confirm(),
+        onHeightCommit: (meters) => this.applyHeightInput(meters),
+      }, this._htmlToolbarLabels);
+    }
   }
 
   override onDeactivate(map: WebGLMap): Promise<void> | void {
@@ -376,11 +475,54 @@ export class Shape3DEditController extends Controller {
     }
     this._mapChangeHandle?.remove();
     this._mapChangeHandle = null;
+    this._toolbar?.destroy();
+    this._toolbar = null;
     this._activeHandle = null;
     this._hoveredVertexIndex = null;
     this._hoveredHandleKind = null;
     this._pendingConfirmed = false;
     return super.onDeactivate(map);
+  }
+
+  /**
+   * Applies a typed height (in meters, WGS84 ellipsoidal height) to the currently active vertex -
+   * the `htmlToolbar` height input's commit handler. If a midpoint is merely selected but not yet
+   * promoted, promotes it into a real vertex first, at its current (pre-edit) position - the same
+   * `insertVertex` call already used when dragging one of its handles does the same promotion (see
+   * handleEditDrag) - so this is exactly as O(1)/scalable as that already-existing path,
+   * regardless of how many vertices the shape has.
+   */
+  private applyHeightInput(meters: number): void {
+    const shape = this._shape;
+    const map = this.map as WebGLMap | null;
+    if (!shape || !map) {
+      return;
+    }
+    if (this._activeSegmentIndex !== null) {
+      const segmentIndex = this._activeSegmentIndex;
+      const count = this._strategy.vertexCount(shape);
+      const a = this._strategy.getVertex(shape, segmentIndex);
+      const b = this._strategy.getVertex(shape, (segmentIndex + 1) % count);
+      const midpointInMapRef = computeSegmentMidpointPosition(map, a, b);
+      const anchorPointInShapeRef =
+          createTransformation(midpointInMapRef.reference!, shape.reference!).transform(midpointInMapRef);
+      this._activeVertexIndex = segmentIndex + 1;
+      this._strategy.insertVertex(shape, this._activeVertexIndex, anchorPointInShapeRef);
+      this._activeSegmentIndex = null;
+      this.emitShapeChanged();
+    }
+    const vertex = this._strategy.getVertex(shape, this._activeVertexIndex);
+    const vertexWGS84 = createTransformation(vertex.reference!, WGS_84).transform(vertex);
+    this.setVertexPosition(this._activeVertexIndex, createPoint(WGS_84, [vertexWGS84.x, vertexWGS84.y, meters]));
+  }
+
+  /** Shared by Escape and the `htmlToolbar` Cancel button - see onKeyEvent's own doc comment. */
+  private cancelSession(): void {
+    if (this._phase === Phase.EDITING) {
+      this.endEditing(false);
+    } else if (this.map) {
+      this.map.controller = null;
+    }
   }
 
   override onGestureEvent(event: GestureEvent): HandleEventResult {
@@ -402,11 +544,7 @@ export class Shape3DEditController extends Controller {
     if (keyEvent.domEvent?.key !== "Escape" || !this.map) {
       return super.onKeyEvent(keyEvent);
     }
-    if (this._phase === Phase.EDITING) {
-      this.endEditing(false);
-    } else {
-      this.map.controller = null;
-    }
+    this.cancelSession();
     return EVENT_HANDLED;
   }
 
@@ -448,7 +586,7 @@ export class Shape3DEditController extends Controller {
       }
       this.invalidate();
       if (result === "finished") {
-        this.finishCreation(map, event.viewPoint);
+        this.finishCreation(map, event.viewPoint, event.inputType);
       }
       return EVENT_HANDLED;
     } else if (event.type === GestureEventType.DOUBLE_CLICK) {
@@ -458,7 +596,7 @@ export class Shape3DEditController extends Controller {
       const result = session.handleDoubleClick();
       this.invalidate();
       if (result === "finished") {
-        this.finishCreation(map, event.viewPoint);
+        this.finishCreation(map, event.viewPoint, event.inputType);
       }
       return EVENT_HANDLED;
     }
@@ -466,12 +604,12 @@ export class Shape3DEditController extends Controller {
   }
 
   /**
-   * `map`/`viewPoint` are only available when this is triggered by an actual gesture (a click or
-   * double-click finishing creation) - `finish()` can also be called programmatically with no
-   * cursor context, in which case the hover-priming step below is simply skipped (the next real
+   * `map`/`viewPoint`/`inputType` are only available when this is triggered by an actual gesture (a
+   * click or double-click finishing creation) - `finish()` can also be called programmatically with
+   * no cursor context, in which case the hover-priming step below is simply skipped (the next real
    * MOVE event will populate it, exactly as before this fix).
    */
-  private finishCreation(map?: WebGLMap, viewPoint?: Point): void {
+  private finishCreation(map?: WebGLMap, viewPoint?: Point, inputType?: string): void {
     const shape = this._creationSession!.shape!;
     this._shape = shape;
     this._phase = Phase.EDITING;
@@ -481,7 +619,7 @@ export class Shape3DEditController extends Controller {
       // subsequent MOVE event - otherwise a drag starting from the exact spot the shape was just
       // created at (with no mouse movement in between) would find nothing hovered and silently do
       // nothing, which looks indistinguishable from the controller having already deactivated.
-      this.updateHoverState(map, viewPoint);
+      this.updateHoverState(map, viewPoint, inputType ?? "mouse");
     }
     this._eventedSupport.emit(SHAPE_CREATED_EVENT, {shape} as ShapeCreatedEvent);
     this.invalidate();
@@ -500,14 +638,28 @@ export class Shape3DEditController extends Controller {
       return this.handleEditClick(map, event);
     } else if (event.type === GestureEventType.DOUBLE_CLICK) {
       return this.handleEditDoubleClick(map, event);
+    } else if (event.type === GestureEventType.LONG_PRESS) {
+      return this.handleEditLongPress(map, event);
     }
     return EVENT_IGNORED;
   }
 
-  /** The full free/move/height/finish/cancel candidate set offered by whichever target (a real vertex or a virtual midpoint) is currently active. */
-  private static fullHandleCandidates(positions: PointHandlePositions): Array<[HandleKind, Point | null]> {
-    return [["free", positions.free], ["move", positions.move], ["height", positions.height],
-            ["finish", positions.finish], ["cancel", positions.cancel]];
+  /**
+   * The full handle candidate set offered by whichever target (a real vertex or a virtual
+   * midpoint) is currently active - free/move/height always, plus finish/cancel only when
+   * `htmlToolbar` is off. It's one or the other, never both: with `htmlToolbar` on, the canvas
+   * finish/cancel icons aren't drawn either (see drawFullHandleSet), so there'd be nothing visible
+   * to hit-test against - excluding them here keeps hover/click/drag from ever recognizing an
+   * invisible hit zone in that area.
+   */
+  private static fullHandleCandidates(positions: PointHandlePositions, htmlToolbar: boolean): Array<[HandleKind, Point | null]> {
+    const candidates: Array<[HandleKind, Point | null]> =
+        [["free", positions.free], ["move", positions.move], ["height", positions.height],
+         ["shiftToggle", positions.shiftToggle]];
+    if (!htmlToolbar) {
+      candidates.push(["finish", positions.finish], ["cancel", positions.cancel]);
+    }
+    return candidates;
   }
 
   /**
@@ -515,14 +667,14 @@ export class Shape3DEditController extends Controller {
    * `_hoveredHandleKind`. Returns whether the hovered handle changed (so callers can decide
    * whether a redraw is actually needed).
    */
-  private updateHoverState(map: WebGLMap, viewPoint: Point): boolean {
+  private updateHoverState(map: WebGLMap, viewPoint: Point, inputType: string): boolean {
     const shape = this._shape!;
     const count = this._strategy.vertexCount(shape);
 
     let bestVertexIndex = -1;
     let bestSegmentIndex = -1;
     let bestKind: HandleKind | null = null;
-    let bestDistance = this._vertexHitPixelTolerance;
+    let bestDistance = this.effectiveHitTolerance(inputType);
 
     for (let i = 0; i < count; i++) {
       const positions = computePointHandlePositions(map, this._strategy.getVertex(shape, i));
@@ -532,7 +684,7 @@ export class Shape3DEditController extends Controller {
       // to just its plain marker.
       const candidates: Array<[HandleKind, Point | null]> =
           this._activeSegmentIndex === null && i === this._activeVertexIndex
-              ? Shape3DEditController.fullHandleCandidates(positions)
+              ? Shape3DEditController.fullHandleCandidates(positions, this._htmlToolbar)
               : [["free", positions.free]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -559,7 +711,7 @@ export class Shape3DEditController extends Controller {
       const b = this._strategy.getVertex(shape, (i + 1) % count);
       const midpointPosition = computeSegmentMidpointPosition(map, a, b);
       const candidates: Array<[HandleKind, Point | null]> = this._activeSegmentIndex === i
-          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition))
+          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition), this._htmlToolbar)
           : [["midpoint", midpointPosition]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -586,16 +738,27 @@ export class Shape3DEditController extends Controller {
     return changed;
   }
 
+  /**
+   * Effective hit-test radius for a given event's input modality - touch gets a floor roughly
+   * matching Apple/Material's ~44-48px touch target guidance (vs. mouse-pointer precision), never
+   * shrinking an explicitly configured larger tolerance back down.
+   */
+  private effectiveHitTolerance(inputType: string): number {
+    return inputType === "touch"
+        ? Math.max(this._vertexHitPixelTolerance, DEFAULT_TOUCH_VERTEX_HIT_PIXEL_TOLERANCE)
+        : this._vertexHitPixelTolerance;
+  }
+
   private handleEditMove(map: WebGLMap, event: GestureEvent): HandleEventResult {
+    // A MOVE event only ever fires between gestures (no button/finger down) - reaching this at
+    // all means whatever drag gesture _dragGestureChecked was tracking has definitely ended, even
+    // in the (unexpected) case that a DRAG_END was somehow missed.
+    this._dragGestureChecked = false;
     if (this._activeHandle) {
       return EVENT_IGNORED;
     }
-    const hoverChanged = this.updateHoverState(map, event.viewPoint);
-    const shiftHeld = event.modifier === ModifierType.SHIFT;
-    if (shiftHeld !== this._shiftHeld) {
-      this._shiftHeld = shiftHeld;
-      this.invalidate();
-    } else if (hoverChanged) {
+    const hoverChanged = this.updateHoverState(map, event.viewPoint, event.inputType);
+    if (hoverChanged) {
       this.invalidate();
     }
     return this._hoveredHandleKind !== null ? EVENT_HANDLED : EVENT_IGNORED;
@@ -620,8 +783,16 @@ export class Shape3DEditController extends Controller {
     if ((event.domEvent as MouseEvent).button !== undefined && (event.domEvent as MouseEvent).button !== 0) {
       return EVENT_IGNORED;
     }
+    // Touch has no hover-before-contact - a MOVE may never have run at this exact position, so
+    // recompute fresh here too instead of only trusting whatever a prior MOVE left behind.
+    this.updateHoverState(map, event.viewPoint, event.inputType);
     if (this._hoveredHandleKind === "finish" || this._hoveredHandleKind === "cancel") {
       this.endEditing(this._hoveredHandleKind === "finish");
+      return EVENT_HANDLED;
+    }
+    if (this._hoveredHandleKind === "shiftToggle") {
+      this._shiftWholeShapeToggled = !this._shiftWholeShapeToggled;
+      this.invalidate();
       return EVENT_HANDLED;
     }
     if (this._hoveredHandleKind === "midpoint" && this._hoveredSegmentIndex !== null) {
@@ -652,12 +823,26 @@ export class Shape3DEditController extends Controller {
     const shape = this._shape!;
 
     if (!this._activeHandle) {
+      if (this._dragGestureChecked) {
+        // Already decided, on this same gesture's first DRAG frame, that nothing here is
+        // grabbable - a pan/orbit drag that started on empty space must never retroactively
+        // "become" a handle grab just because the live cursor happens to sweep across one
+        // mid-drag; only the drag's own actual start position counts. Without this, a plain map
+        // pan whose path crosses a move/height handle would unexpectedly start dragging it.
+        return EVENT_IGNORED;
+      }
+      this._dragGestureChecked = true;
+
+      // Touch has no hover-before-contact - a MOVE may never have run at this drag's start
+      // position, so recompute fresh here too instead of only trusting a prior MOVE.
+      this.updateHoverState(map, event.viewPoint, event.inputType);
       if (this._hoveredHandleKind === null) {
         return EVENT_IGNORED;
       }
-      if (this._hoveredHandleKind === "finish" || this._hoveredHandleKind === "cancel") {
-        // Both are click targets, not drag targets - absorb the gesture (so it doesn't pan the
-        // camera through what's meant to be a fixed button) without acting on it.
+      if (this._hoveredHandleKind === "finish" || this._hoveredHandleKind === "cancel" ||
+          this._hoveredHandleKind === "shiftToggle") {
+        // All three are click targets, not drag targets - absorb the gesture (so it doesn't pan
+        // the camera through what's meant to be a fixed button) without acting on it.
         return EVENT_HANDLED;
       }
       if (this._hoveredHandleKind === "midpoint") {
@@ -667,10 +852,10 @@ export class Shape3DEditController extends Controller {
       }
 
       const kind = this._hoveredHandleKind;
-      // Shift never applies to "free" - that gesture was never part of this feature's scope, so a
-      // Shift+free drag behaves exactly as if Shift weren't held at all (including still
-      // promoting an active midpoint, same as any other non-Shift drag on one).
-      const shiftWholeShape = event.modifier === ModifierType.SHIFT && kind !== "free";
+      // Whole-shape mode never applies to "free" - that gesture was never part of this feature's
+      // scope, so a "free" drag behaves the same whether whole-shape mode is toggled on or not
+      // (including still promoting an active midpoint, same as any other drag on one).
+      const shiftWholeShape = this._shiftWholeShapeToggled && kind !== "free";
 
       let vertexIndex: number | null;
       let anchorPointInShapeRef: Point;
@@ -688,8 +873,8 @@ export class Shape3DEditController extends Controller {
         anchorPointInShapeRef = createTransformation(map.reference, shape.reference!).transform(midpointInMapRef);
 
         if (shiftWholeShape) {
-          // Shift shifts the whole shape without ever promoting this midpoint into a real
-          // vertex - nothing about a uniform shift needs a new vertex here.
+          // Whole-shape mode shifts the whole shape without ever promoting this midpoint into a
+          // real vertex - nothing about a uniform shift needs a new vertex here.
           vertexIndex = null;
         } else {
           // Dragging one of the active midpoint's handles is what promotes it into a real,
@@ -715,7 +900,11 @@ export class Shape3DEditController extends Controller {
       const handle = new EditHandle(kind);
       handle.vertexIndex = vertexIndex;
       handle.focused = true;
+      handle.isTouch = event.inputType === "touch";
       this._activeHandle = handle;
+      if (handle.isTouch) {
+        this.vibrate(HAPTIC_PULSE_MS);
+      }
 
       handle.interactionFunction =
           kind === "height" ? verticalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
@@ -770,8 +959,12 @@ export class Shape3DEditController extends Controller {
   }
 
   private handleEditDragEnd(): HandleEventResult {
+    this._dragGestureChecked = false;
     if (!this._activeHandle) {
       return EVENT_IGNORED;
+    }
+    if (this._activeHandle.isTouch) {
+      this.vibrate(HAPTIC_PULSE_MS);
     }
     this._activeHandle.endInteraction();
     this._activeHandle = null;
@@ -780,8 +973,27 @@ export class Shape3DEditController extends Controller {
   }
 
   private handleEditDoubleClick(map: WebGLMap, event: GestureEvent): HandleEventResult {
+    return this.removeVertexNear(map, event);
+  }
+
+  /**
+   * Touch-only alternative to double-tap for removing a vertex - double-tapping to delete fights
+   * the "double-tap to zoom" muscle memory built into nearly every map app. Shares the exact same
+   * fresh hit-test + removal logic as double-click. Gated to touch only: LONG_PRESS's own doc
+   * comment doesn't say whether it can also fire for a mouse held stationary before a drag starts,
+   * and firing vertex deletion from an ordinary mouse pause-before-drag would be a real
+   * regression - double-click/double-tap keeps working for both input types regardless.
+   */
+  private handleEditLongPress(map: WebGLMap, event: GestureEvent): HandleEventResult {
+    if (event.inputType !== "touch") {
+      return EVENT_IGNORED;
+    }
+    return this.removeVertexNear(map, event);
+  }
+
+  private removeVertexNear(map: WebGLMap, event: GestureEvent): HandleEventResult {
     const shape = this._shape!;
-    const index = findClosestVertexIndex(map, event.viewPoint, shape, this._strategy, this._vertexHitPixelTolerance);
+    const index = findClosestVertexIndex(map, event.viewPoint, shape, this._strategy, this.effectiveHitTolerance(event.inputType));
     if (index < 0 || !this._strategy.canRemoveVertex(shape, index)) {
       return EVENT_IGNORED;
     }
@@ -805,6 +1017,13 @@ export class Shape3DEditController extends Controller {
     this.emitShapeChanged();
     this.invalidate();
     return EVENT_HANDLED;
+  }
+
+  /** Safe no-op when the Vibration API is unavailable (e.g. desktop, or iOS Safari, which never implemented it). */
+  private vibrate(ms: number): void {
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(ms);
+    }
   }
 
   private emitShapeChanged(): void {
@@ -838,6 +1057,9 @@ export class Shape3DEditController extends Controller {
 
   private drawCreationPreview(geoCanvas: GeoCanvas): void {
     const shape = this._creationSession?.shape;
+    // No canvas finish/cancel affordance exists during CREATING either (see class doc/comments
+    // elsewhere) - the htmlToolbar option mirrors that, only appearing once editing begins.
+    this._toolbar?.setVisible(false);
     if (!shape) {
       return;
     }
@@ -863,12 +1085,41 @@ export class Shape3DEditController extends Controller {
   }
 
   /**
+   * While actively touch-dragging one of `positions`' own icons, returns a copy with that one
+   * icon's position offset a fixed number of pixels up the screen from its real position - so the
+   * icon being dragged is never hidden underneath the fingertip dragging it, the same "handle
+   * floats above your fingertip" idiom iOS/Android text-selection handles use. A mouse drag (which
+   * has its own visible cursor off to the side) is returned unchanged.
+   */
+  private withTouchDragOffset(map: WebGLMap, positions: PointHandlePositions, activeKind: HandleKind | null): PointHandlePositions {
+    if (!this._activeHandle?.isTouch || activeKind !== this._activeHandle.kind) {
+      return positions;
+    }
+    const key = activeKind as "free" | "move" | "height";
+    const original = positions[key];
+    if (!original) {
+      return positions;
+    }
+    return {...positions, [key]: this.offsetPointUpOnScreen(map, original, TOUCH_DRAG_OFFSET_PIXELS)};
+  }
+
+  private offsetPointUpOnScreen(map: WebGLMap, point: Point, pixels: number): Point {
+    try {
+      const view = map.mapToViewTransformation.transform(point);
+      const offsetView = createPoint(null, [view.x, view.y - pixels]);
+      return map.viewToMapTransformation.transform(offsetView);
+    } catch (e) {
+      return point;
+    }
+  }
+
+  /**
    * Draws the free/move/height/finish/cancel handle set at `positions` - shared by the active
    * vertex and the active midpoint, the only two things that ever get the full set. `shiftHeld`
    * only affects the move/height icons' size, independent of `activeKind`'s color - see the new
    * `*_SHIFT_ICON_STYLE` constants.
    */
-  private drawFullHandleSet(geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null, shiftHeld: boolean): void {
+  private drawFullHandleSet(geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null): void {
     if (activeKind === "free") {
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_ICON_STYLE);
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_OCCLUDED_ICON_STYLE);
@@ -877,27 +1128,37 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawIcon(positions.free, VERTEX_DEFAULT_OCCLUDED_ICON_STYLE);
     }
     if (positions.move) {
-      const [style, occludedStyle] = shiftHeld ? [MOVE_HANDLE_SHIFT_ICON_STYLE, MOVE_HANDLE_SHIFT_OCCLUDED_ICON_STYLE] :
+      const [style, occludedStyle] = this._shiftWholeShapeToggled ? [MOVE_HANDLE_SHIFT_ICON_STYLE, MOVE_HANDLE_SHIFT_OCCLUDED_ICON_STYLE] :
           activeKind === "move" ? [MOVE_HANDLE_FOCUSED_ICON_STYLE, MOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [MOVE_HANDLE_DEFAULT_ICON_STYLE, MOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.move, style);
       geoCanvas.drawIcon(positions.move, occludedStyle);
     }
     if (positions.height) {
-      const [style, occludedStyle] = shiftHeld ? [HEIGHT_HANDLE_SHIFT_ICON_STYLE, HEIGHT_HANDLE_SHIFT_OCCLUDED_ICON_STYLE] :
+      const [style, occludedStyle] = this._shiftWholeShapeToggled ? [HEIGHT_HANDLE_SHIFT_ICON_STYLE, HEIGHT_HANDLE_SHIFT_OCCLUDED_ICON_STYLE] :
           activeKind === "height" ? [HEIGHT_HANDLE_FOCUSED_ICON_STYLE, HEIGHT_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [HEIGHT_HANDLE_DEFAULT_ICON_STYLE, HEIGHT_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.height, style);
       geoCanvas.drawIcon(positions.height, occludedStyle);
     }
-    if (positions.finish) {
+    if (positions.shiftToggle) {
+      const [style, occludedStyle] = this._shiftWholeShapeToggled ?
+          [SHIFT_TOGGLE_ON_ICON_STYLE, SHIFT_TOGGLE_ON_OCCLUDED_ICON_STYLE] :
+          [SHIFT_TOGGLE_OFF_ICON_STYLE, SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE];
+      geoCanvas.drawIcon(positions.shiftToggle, style);
+      geoCanvas.drawIcon(positions.shiftToggle, occludedStyle);
+    }
+    // One or the other, never both - the htmlToolbar option is a full replacement for these two
+    // icons, not an addition alongside them (matching fullHandleCandidates' matching exclusion,
+    // which keeps a now-invisible icon from also staying hoverable/clickable).
+    if (positions.finish && !this._htmlToolbar) {
       const [style, occludedStyle] = activeKind === "finish" ?
           [FINISH_HANDLE_FOCUSED_ICON_STYLE, FINISH_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [FINISH_HANDLE_DEFAULT_ICON_STYLE, FINISH_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.finish, style);
       geoCanvas.drawIcon(positions.finish, occludedStyle);
     }
-    if (positions.cancel) {
+    if (positions.cancel && !this._htmlToolbar) {
       const [style, occludedStyle] = activeKind === "cancel" ?
           [CANCEL_HANDLE_FOCUSED_ICON_STYLE, CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [CANCEL_HANDLE_DEFAULT_ICON_STYLE, CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
@@ -934,7 +1195,7 @@ export class Shape3DEditController extends Controller {
           i === this._activeHandle?.vertexIndex ? this._activeHandle!.kind :
           i === this._hoveredVertexIndex ? this._hoveredHandleKind :
           null;
-      this.drawFullHandleSet(geoCanvas, positions, activeKind, this._shiftHeld);
+      this.drawFullHandleSet(geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind);
     }
 
     // Virtual per-segment midpoint markers - recomputed live from the current vertex list every
@@ -943,6 +1204,9 @@ export class Shape3DEditController extends Controller {
     // active midpoint (if any) gets the same full handle set an active vertex would, around its
     // calculated (not-yet-committed) position; every other segment just gets its small marker,
     // brightened while hovered as a "you can select this" cue.
+    // Captured when the loop below passes over the active midpoint (if any), so the toolbar sync
+    // further down doesn't need to recompute it a second time.
+    let activeMidpointInMapRef: Point | null = null;
     const segmentCount = this._strategy.isClosedRing ? count : count - 1;
     for (let i = 0; i < segmentCount; i++) {
       const a = this._strategy.getVertex(shape, i);
@@ -955,6 +1219,7 @@ export class Shape3DEditController extends Controller {
         geoCanvas.drawIcon(midpoint, hovered ? MIDPOINT_HOVERED_OCCLUDED_ICON_STYLE : MIDPOINT_OCCLUDED_ICON_STYLE);
         continue;
       }
+      activeMidpointInMapRef = midpoint;
 
       const positions = computePointHandlePositions(map, midpoint);
       // An in-progress Shift+midpoint drag keeps _activeSegmentIndex set for the whole gesture
@@ -966,7 +1231,7 @@ export class Shape3DEditController extends Controller {
               ? this._activeHandle.kind :
           this._hoveredSegmentIndex === i ? this._hoveredHandleKind :
           null;
-      this.drawFullHandleSet(geoCanvas, positions, activeKind, this._shiftHeld);
+      this.drawFullHandleSet(geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind);
     }
 
     const handle = this._activeHandle;
@@ -1015,6 +1280,20 @@ export class Shape3DEditController extends Controller {
           [toPoint(EPSG_4978, topEpsg4978), toPoint(EPSG_4978, earthCenterEpsg4978)]);
       geoCanvas.drawShape(dropLine, DROP_LINE_STYLE);
       geoCanvas.drawShape(dropLine, DROP_LINE_OCCLUDED_STYLE);
+    }
+
+    if (this._toolbar) {
+      this._toolbar.setVisible(true);
+      this._toolbar.setFinishEnabled(true);
+      // Reflects the active midpoint's own (not-yet-committed) height too, not just a real
+      // vertex's - typing a value there promotes it into a real vertex at that height, the same
+      // way dragging one of its handles already does (see applyHeightInput).
+      const activeTargetWGS84 = this._activeSegmentIndex === null
+          ? createTransformation(shape.reference!, WGS_84).transform(this._strategy.getVertex(shape, this._activeVertexIndex))
+          : activeMidpointInMapRef
+              ? createTransformation(activeMidpointInMapRef.reference!, WGS_84).transform(activeMidpointInMapRef)
+              : null;
+      this._toolbar.setHeightValue(activeTargetWGS84?.z ?? null);
     }
   }
 

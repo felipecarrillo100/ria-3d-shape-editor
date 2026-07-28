@@ -45,6 +45,12 @@ export interface PointHandlePositions {
   finish: Point | null;
   /** Offset below and to the left of the vertex - click to discard changes and end editing. */
   cancel: Point | null;
+  /**
+   * The exact mirror of `move` (same offset magnitude, same zero vertical/"up" component,
+   * opposite side) - click to toggle whole-shape move/height mode. Null wherever `move`/`height`
+   * are, for the same reason.
+   */
+  shiftToggle: Point | null;
 }
 
 export function computePointHandlePositions(
@@ -55,7 +61,7 @@ export function computePointHandlePositions(
   const vertexInMapRef = createTransformation(vertexPoint.reference!, map.reference).transform(vertexPoint);
 
   if (!map.reference.equals(EPSG_4978)) {
-    return {free: vertexInMapRef, move: null, height: null, finish: null, cancel: null};
+    return {free: vertexInMapRef, move: null, height: null, finish: null, cancel: null, shiftToggle: null};
   }
 
   const up = normalize(vertexInMapRef);
@@ -64,11 +70,12 @@ export function computePointHandlePositions(
 
   const move = toPoint(map.reference, add(vertexInMapRef, scale(cameraRight, offset)));
   const height = toPoint(map.reference, add(vertexInMapRef, scale(up, offset)));
+  const shiftToggle = toPoint(map.reference, add(vertexInMapRef, scale(cameraRight, -offset)));
 
   const belowCenter = add(vertexInMapRef, scale(up, -offset * BELOW_VERTICAL_OFFSET_MULTIPLIER));
   const horizontalStep = scale(cameraRight, offset * BELOW_HORIZONTAL_OFFSET_MULTIPLIER);
   const cancel = toPoint(map.reference, add(belowCenter, scale(horizontalStep, -1)));
   const finish = toPoint(map.reference, add(belowCenter, horizontalStep));
 
-  return {free: vertexInMapRef, move, height, finish, cancel};
+  return {free: vertexInMapRef, move, height, finish, cancel, shiftToggle};
 }

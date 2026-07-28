@@ -10,6 +10,7 @@ import {
   createCircleIconImage,
   createDiamondIconImage,
   createHorizontalArrowIconImage,
+  createShapeToggleIconImage,
   createVerticalArrowIconImage,
   createXMarkIconImage,
 } from "./IconFactory.js";
@@ -36,6 +37,9 @@ const HEIGHT_COLOR = "rgb(255,150,60)";
 const DROP_LINE_COLOR = "rgb(60,140,240)";
 const FINISH_COLOR = "rgb(80,150,255)";
 const CANCEL_COLOR = "rgb(230,80,80)";
+// Distinct from every other handle color already in use (move green, height orange, finish blue,
+// cancel red) - the whole-shape toggle needs its own identity, unmistakable at a glance.
+const SHIFT_TOGGLE_ON_COLOR = "rgb(200,120,230)";
 const HANDLE_BG = "rgb(10,10,10)";
 // Deliberately more saturated than HEIGHT_COLOR above, so an occluded height handle still reads
 // as a clear, distinct warning rather than just "still kind of orange."
@@ -354,6 +358,42 @@ export const CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE: IconStyle = {
   url: createXMarkIconImage(CANCEL_COLOR, HANDLE_BG, 10),
   width: "26px",
   height: "26px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+// A single dot (off - dragging move/height affects one vertex) or four dots (on - affects the
+// whole shape) - click-only, toggles Shape3DEditController's whole-shape mode. Same
+// muted-when-inactive language as VERTEX_INACTIVE_ICON_STYLE for "off", and its own dedicated
+// color for "on" so the mode is unmistakable at a glance.
+export const SHIFT_TOGGLE_OFF_ICON_STYLE: IconStyle = {
+  url: createShapeToggleIconImage(INACTIVE_COLOR, HANDLE_BG, false, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createShapeToggleIconImage(INACTIVE_COLOR, HANDLE_BG, false, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.OCCLUDED_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const SHIFT_TOGGLE_ON_ICON_STYLE: IconStyle = {
+  url: createShapeToggleIconImage(SHIFT_TOGGLE_ON_COLOR, HANDLE_BG, true, 8),
+  width: "22px",
+  height: "22px",
+  occlusionMode: OcclusionMode.VISIBLE_ONLY,
+  drapeTarget: DrapeTarget.NOT_DRAPED,
+};
+
+export const SHIFT_TOGGLE_ON_OCCLUDED_ICON_STYLE: IconStyle = {
+  url: createShapeToggleIconImage(SHIFT_TOGGLE_ON_COLOR, HANDLE_BG, true, 8),
+  width: "22px",
+  height: "22px",
   occlusionMode: OcclusionMode.OCCLUDED_ONLY,
   drapeTarget: DrapeTarget.NOT_DRAPED,
 };

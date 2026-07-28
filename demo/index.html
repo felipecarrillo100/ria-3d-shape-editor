@@ -34,6 +34,14 @@
     #toolbar button.active {
       outline: 2px solid rgb(116, 207, 221);
     }
+    #toolbar label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: white;
+      font-size: 13px;
+      padding: 0 4px;
+    }
   </style>
 </head>
 <body>
@@ -44,6 +52,10 @@
     <button id="btn-line">Create Line</button>
     <button id="btn-polygon">Create Polygon</button>
     <button id="btn-edit" disabled>Edit Selected</button>
+    <label>
+      <input type="checkbox" id="chk-html-toolbar" />
+      HTML toolbar (touch-friendly)
+    </label>
   </div>
   <script type="module" src="/src/bootstrap.ts"></script>
 </body>
