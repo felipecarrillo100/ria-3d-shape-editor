@@ -1,5 +1,6 @@
 import {Controller} from "@luciad/ria/view/controller/Controller.js";
 import {WebGLMap} from "@luciad/ria/view/WebGLMap.js";
+import {CursorHandle} from "@luciad/ria/view/CursorManager.js";
 import {GestureEvent} from "@luciad/ria/view/input/GestureEvent.js";
 import {GestureEventType} from "@luciad/ria/view/input/GestureEventType.js";
 import {KeyEvent} from "@luciad/ria/view/input/KeyEvent.js";
@@ -303,6 +304,16 @@ export class Shape3DEditController extends Controller {
    */
   private _mapChangeHandle: Handle | null = null;
   /**
+   * Set in onActivate only when starting in Phase.CREATING - a crosshair signals the controller is
+   * active even before anything is drawn (LineString/Polygon draw nothing at all until the first
+   * point is placed, unlike Point, whose rubber-band vertex icon gives immediate feedback). Removed
+   * (and reset to null) the moment editing begins (finishCreation) or the controller deactivates
+   * while still creating (onDeactivate, e.g. via Escape) - editing itself always keeps the default
+   * pointer, since every interactive element there is already individually drawn, and a crosshair's
+   * conventional "click to place" meaning doesn't match editing's actual click-to-select behavior.
+   */
+  private _creationCursorHandle: CursorHandle | null = null;
+  /**
    * The one vertex (of a possibly-many-vertex LineString/Polygon) that currently gets the full
    * handle set (free/move/height/finish/cancel) - every other vertex draws only a plain,
    * clickable marker, so editing a shape with many vertices doesn't become an unmanageable field
@@ -482,6 +493,9 @@ export class Shape3DEditController extends Controller {
   override onActivate(map: WebGLMap): void {
     super.onActivate(map);
     this._mapChangeHandle = map.on("MapChange", () => this.invalidate());
+    if (this._phase === Phase.CREATING) {
+      this._creationCursorHandle = map.cursorManager.addCursor("crosshair");
+    }
     if (this._htmlToolbar) {
       this._toolbar = new HtmlToolbar(map.domNode, {
         onCancel: () => this.cancelSession(),
@@ -498,6 +512,8 @@ export class Shape3DEditController extends Controller {
     }
     this._mapChangeHandle?.remove();
     this._mapChangeHandle = null;
+    this._creationCursorHandle?.remove();
+    this._creationCursorHandle = null;
     this._toolbar?.destroy();
     this._toolbar = null;
     this._activeHandle = null;
@@ -637,6 +653,8 @@ export class Shape3DEditController extends Controller {
     this._shape = shape;
     this._phase = Phase.EDITING;
     this._creationSession = null;
+    this._creationCursorHandle?.remove();
+    this._creationCursorHandle = null;
     if (map && viewPoint) {
       // Compute hover state at the click's own position right away, rather than waiting for a
       // subsequent MOVE event - otherwise a drag starting from the exact spot the shape was just
