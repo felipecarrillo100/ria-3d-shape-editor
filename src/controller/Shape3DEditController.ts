@@ -221,14 +221,16 @@ export interface Shape3DEditControllerOptions {
  * double-tap anywhere near a vertex - see removeVertexNear); a click-only "shiftToggle" handle
  * (the exact mirror of "move," on the opposite side) toggles whole-shape mode, which applies to
  * "free"/"move"/"height" alike - every other vertex is rigidly carried along by whichever one is
- * dragged; a drag-only "rotate" handle (top-right, the mirror of "remove") swings every other
+ * dragged, and which is only offered on a shape with more than one vertex, never for a Point (see
+ * wholeShapeModeAvailable); a drag-only "rotate" handle (top-right, the mirror of "remove") swings every other
  * vertex horizontally around the active vertex, which stays fixed as the pivot - only offered
  * while whole-shape mode is armed, since rotating a single vertex around itself is meaningless;
  * and a click-only pair below the vertex - a checkmark ("finish", confirm and end editing, down-right)
  * and an X ("cancel", discard and end editing, down-left), grouped together and deliberately
  * separated from the shape-adjusting handles above/beside the vertex. The move/height/finish/
  * cancel/shiftToggle/remove/rotate handles only appear on a 3D (EPSG:4978) map - see
- * HandleInteractions.ts's verticalMovePointInteraction guard.
+ * HandleInteractions.ts's verticalMovePointInteraction guard - and shiftToggle/rotate additionally
+ * require a shape with more than one vertex, so a Point never shows either.
  *
  * Nothing is persisted by this controller itself - it only mutates the shape it creates/is given.
  * Callers should persist (if at all) only in response to `ShapeEditingFinished` with
@@ -295,6 +297,12 @@ export class Shape3DEditController extends Controller {
    * drags and across switching which vertex/midpoint is active, until explicitly toggled off
    * again - not reset anywhere else. Works identically for mouse and touch; there is no keyboard
    * modifier equivalent (Shift+drag was removed in favor of this single, discoverable mechanism).
+   *
+   * Never needs resetting when whole-shape mode becomes unavailable, because it cannot become true
+   * in the first place: the only thing that sets it is a click on a handle that
+   * wholeShapeModeAvailable withholds on a single-vertex shape, and no editing gesture can shrink a
+   * shape to one vertex either (canRemoveVertex floors removal at minVertexCount - 2 for Polyline,
+   * 3 for Polygon).
    */
   private _shiftWholeShapeToggled = false;
   /** Set right before `map.controller = null` by endEditing(); read once by onDeactivate. */
@@ -736,24 +744,47 @@ export class Shape3DEditController extends Controller {
   }
 
   /**
+   * Whether whole-shape mode can act on anything at all: it needs at least one vertex OTHER than
+   * the one being dragged to carry along, and a pivot that isn't also the only vertex. False for a
+   * Point (always exactly one vertex), and for a degenerate single-vertex Polyline/Polygon handed
+   * in as `existingShape` - nothing validates that count, so this is expressed as the actual
+   * capability rather than a `shapeType !== POINT` check.
+   *
+   * Gating on this is what keeps the shiftToggle handle from being offered where arming it would
+   * do nothing: with one vertex, the whole-shape branches of handleEditDrag reduce to exactly the
+   * single-vertex result they already produce, and rotate provably cannot move anything at all
+   * (rotateOtherVerticesAround skips the pivot, which is the only vertex) while still emitting a
+   * ShapeChanged on every drag frame.
+   */
+  private get wholeShapeModeAvailable(): boolean {
+    const shape = this._shape;
+    return !!shape && this._strategy.vertexCount(shape) > 1;
+  }
+
+  /**
    * The full handle candidate set offered by whichever target (a real vertex or a virtual
-   * midpoint) is currently active - free/move/height/shiftToggle always, plus finish/cancel only
+   * midpoint) is currently active - free/move/height always, plus finish/cancel only
    * when `htmlToolbar` is off (see below), plus remove only when `canRemove` (a virtual, not yet
    * promoted midpoint has nothing to remove; a shape at its minimum vertex count can't lose one
-   * either - see ShapeEditStrategy.canRemoveVertex), plus rotate only when `armed` (whole-shape
-   * mode) - rotating a single vertex around itself is meaningless, and rotate is scoped to real
-   * vertices only (a midpoint isn't a committed pivot), so callers always pass `false` for it at
-   * the midpoint call site. It's one or the other for finish/cancel, never both: with
-   * `htmlToolbar` on, the canvas finish/cancel icons aren't drawn either (see drawFullHandleSet),
-   * so there'd be nothing visible to hit-test against - excluding them here keeps hover/click/drag
-   * from ever recognizing an invisible hit zone in that area.
+   * either - see ShapeEditStrategy.canRemoveVertex), plus shiftToggle only when
+   * `wholeShapeAvailable` (see wholeShapeModeAvailable - there's nothing for whole-shape mode to
+   * carry along on a single-vertex shape, so the toggle isn't offered), plus rotate only when
+   * `armed` (whole-shape mode) - rotating a single vertex around itself is meaningless, and rotate
+   * is scoped to real vertices only (a midpoint isn't a committed pivot), so callers always pass
+   * `false` for it at the midpoint call site. It's one or the other for finish/cancel, never both:
+   * with `htmlToolbar` on, the canvas finish/cancel icons aren't drawn either (see
+   * drawFullHandleSet), so there'd be nothing visible to hit-test against - excluding them here
+   * keeps hover/click/drag from ever recognizing an invisible hit zone in that area. Same goes for
+   * shiftToggle: this one list feeds hover, click AND drag, so withholding it here withdraws the
+   * handle from all three at once, matching drawFullHandleSet's own matching exclusion.
    */
   private static fullHandleCandidates(
       positions: PointHandlePositions, htmlToolbar: boolean, canRemove: boolean,
-      armed: boolean): Array<[HandleKind, Point | null]> {
+      armed: boolean, wholeShapeAvailable: boolean): Array<[HandleKind, Point | null]> {
     const candidates: Array<[HandleKind, Point | null]> =
         [["free", positions.free], ["move", positions.move], ["height", positions.height],
-         ["shiftToggle", positions.shiftToggle], ["remove", canRemove ? positions.remove : null],
+         ["shiftToggle", wholeShapeAvailable ? positions.shiftToggle : null],
+         ["remove", canRemove ? positions.remove : null],
          ["rotate", armed ? positions.rotate : null]];
     if (!htmlToolbar) {
       candidates.push(["finish", positions.finish], ["cancel", positions.cancel]);
@@ -784,7 +815,8 @@ export class Shape3DEditController extends Controller {
       const candidates: Array<[HandleKind, Point | null]> =
           this._activeSegmentIndex === null && i === this._activeVertexIndex
               ? Shape3DEditController.fullHandleCandidates(
-                  positions, this._htmlToolbar, this._strategy.canRemoveVertex(shape, i), this._shiftWholeShapeToggled)
+                  positions, this._htmlToolbar, this._strategy.canRemoveVertex(shape, i),
+                  this._shiftWholeShapeToggled, this.wholeShapeModeAvailable)
               : [["free", positions.free]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -811,7 +843,8 @@ export class Shape3DEditController extends Controller {
       const b = this._strategy.getVertex(shape, (i + 1) % count);
       const midpointPosition = computeSegmentMidpointPosition(map, a, b);
       const candidates: Array<[HandleKind, Point | null]> = this._activeSegmentIndex === i
-          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition), this._htmlToolbar, false, false)
+          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition),
+              this._htmlToolbar, false, false, this.wholeShapeModeAvailable)
           : [["midpoint", midpointPosition]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -1312,7 +1345,9 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawIcon(positions.height, style);
       geoCanvas.drawIcon(positions.height, occludedStyle);
     }
-    if (positions.shiftToggle) {
+    // Withheld entirely on a single-vertex shape (see wholeShapeModeAvailable), matching
+    // fullHandleCandidates' own exclusion so nothing invisible stays hoverable/clickable.
+    if (positions.shiftToggle && this.wholeShapeModeAvailable) {
       const [style, occludedStyle] = this._shiftWholeShapeToggled ?
           [SHIFT_TOGGLE_ON_ICON_STYLE, SHIFT_TOGGLE_ON_OCCLUDED_ICON_STYLE] :
           [SHIFT_TOGGLE_OFF_ICON_STYLE, SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE];

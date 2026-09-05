@@ -204,6 +204,59 @@ describe("Shape3DEditController.cancel()", () => {
 // double-click/double-tap removal (removeVertexNear) - exercised directly here rather than
 // through a simulated gesture, since hit-testing/positioning already has its own coverage
 // elsewhere (PointHandleLayout) and isn't what this behavior is about.
+// Whole-shape mode needs a vertex other than the dragged one to carry along, so the shiftToggle
+// handle is withheld on a single-vertex shape. Tested through wholeShapeModeAvailable and the
+// candidate list rather than the draw pass: GeoCanvas isn't mocked anywhere in this repo, and the
+// candidate list is the single source hover, click AND drag all read, so it is what actually decides
+// whether the handle is reachable at all.
+describe("Shape3DEditController whole-shape mode availability", () => {
+  it("is unavailable for a Point, which only ever has one vertex", () => {
+    const point = createPoint(REFERENCE, [1, 2, 3]);
+    const controller = new Shape3DEditController(ShapeType.POINT, fakeLayer, {existingShape: point});
+
+    expect((controller as any).wholeShapeModeAvailable).toBe(false);
+  });
+
+  it("is available for a Polyline and a Polygon at their minimum vertex counts", () => {
+    const line = createPolyline(REFERENCE, [[0, 0, 0], [10, 0, 0]]);
+    const lineController = new Shape3DEditController(ShapeType.POLYLINE, fakeLayer, {existingShape: line});
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0]]);
+    const polygonController = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+
+    expect((lineController as any).wholeShapeModeAvailable).toBe(true);
+    expect((polygonController as any).wholeShapeModeAvailable).toBe(true);
+  });
+
+  // The case a `shapeType !== POINT` check would have missed: nothing validates existingShape's
+  // vertex count, so a degenerate one-vertex Polyline can be handed in.
+  it("is unavailable for a degenerate single-vertex Polyline", () => {
+    const line = createPolyline(REFERENCE, [[0, 0, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYLINE, fakeLayer, {existingShape: line});
+
+    expect((controller as any).wholeShapeModeAvailable).toBe(false);
+  });
+
+  // fullHandleCandidates only reads properties off `positions`, so a plain literal stands in for a
+  // real PointHandlePositions.
+  const positions = () => {
+    const p = createPoint(REFERENCE, [0, 0, 0]);
+    return {free: p, move: p, height: p, finish: p, cancel: p, shiftToggle: p, remove: p, rotate: p};
+  };
+  const kindsWithAPosition = (wholeShapeAvailable: boolean): string[] =>
+      (Shape3DEditController as any)
+          .fullHandleCandidates(positions(), false, false, false, wholeShapeAvailable)
+          .filter(([, position]: [string, unknown]) => position !== null)
+          .map(([kind]: [string, unknown]) => kind);
+
+  it("withholds the shiftToggle candidate when whole-shape mode is unavailable", () => {
+    expect(kindsWithAPosition(false)).not.toContain("shiftToggle");
+  });
+
+  it("offers the shiftToggle candidate when whole-shape mode is available", () => {
+    expect(kindsWithAPosition(true)).toContain("shiftToggle");
+  });
+});
+
 // The htmlToolbar height input is expressed in the uom family's BASE unit (m or ft), so a typed
 // value has to be converted before it becomes a WGS84 ellipsoidal height. Exercised through the
 // controller's own applyHeightInput rather than the toolbar itself: HtmlToolbar needs a real DOM,

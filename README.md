@@ -62,7 +62,7 @@ overlapping icons.
 | Height | drag | Moves in Z only - X/Y frozen |
 | Rotate | drag | Swings the whole shape horizontally around this vertex, which stays fixed as the pivot - only shown while whole-shape mode is armed |
 | Remove | click/tap | Removes this vertex outright (also reachable via double-click/double-tap anywhere near a vertex) |
-| Whole-shape toggle | click/tap | Arms/disarms whole-shape mode (see below) |
+| Whole-shape toggle | click/tap | Arms/disarms whole-shape mode (see below) - only on a shape with more than one vertex, so never on a `Point` |
 | Finish | click/tap | Confirms the shape and ends editing |
 | Cancel | click/tap | Discards changes made this session and ends editing |
 | Midpoint marker | click to select, then drag one of its own handles | Promotes that segment's midpoint into a real vertex |
@@ -70,6 +70,10 @@ overlapping icons.
 Move/Height/Rotate/Remove/the toggle/Finish/Cancel only appear on a 3D (`EPSG:4978`, geocentric)
 map view - on a 2D map there's no well-defined "up" to make height or rotation meaningful. Use
 `controller.setVertexPosition(index, point)` to set a height programmatically in that case.
+
+The toggle and Rotate have a second condition: the shape must have more than one vertex. A `Point`
+therefore never shows either - there is no "every other vertex" for whole-shape mode to carry along,
+and rotating the only vertex around itself is a no-op.
 
 ### Whole-shape mode
 
@@ -79,6 +83,10 @@ rigidly carried along by the same move/height delta, or swung around the active 
 instead of only the one active vertex. It's sticky (stays armed across drags and across switching
 which vertex is active) and global (one on/off state for the whole session), and works identically
 for mouse and touch - there is no keyboard-modifier equivalent.
+
+The toggle is only offered on a shape with more than one vertex, so whole-shape mode simply doesn't
+exist for a `Point`: with a single vertex, every whole-shape drag would reduce to the ordinary
+single-vertex one it already is.
 
 ### Live feedback while dragging
 
