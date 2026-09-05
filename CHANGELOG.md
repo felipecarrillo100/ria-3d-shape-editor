@@ -6,6 +6,40 @@ Entries from `0.1.5` onward are written as the work lands. Earlier entries were 
 git history after the fact, grouped by the version recorded in `package.json` at each commit - the
 mapping to what was actually published on npm at the time may not be exact.
 
+## 0.2.0
+
+### Added
+
+- **2D map support.** The controller now detects whether its map is geocentric (`EPSG:4978`) or
+  projected when it is activated, and adapts. Previously every handle except the vertex icon itself
+  collapsed to nothing on a 2D map, which left no way to *confirm* an edit at all unless the
+  `htmlToolbar` option was on - Escape and Cancel both revert. 3D behaviour is unchanged.
+  - Handles are laid out with screen-pixel offsets in 2D, in the same slots the 3D set uses, so they
+    keep a constant on-screen size at any zoom.
+  - `height` is never offered in 2D (a projected reference has no per-location "up"). `move` is
+    offered only while whole-shape mode is armed, where it is the "translate every vertex" grip - in
+    2D the vertex icon already moves in the horizontal plane on its own.
+  - Rotate draws a flat arc band in 2D; the drop line and reference-plane grid are 3D-only.
+
+### Fixed
+
+- **Dragging a vertex on a 2D map no longer destroys its height.** The vertex drag went through a
+  `LocationMode.CLOSEST_SURFACE` raycast, which per LuciadRIA's own docs "has an effect on 3D maps
+  only" and reports no height on a 2D map - so every 2D drag would have flattened the vertex, and the
+  vertex icon was the only drag handle a 2D session offered. It now moves in X/Y with Z re-imposed
+  from the vertex's original value.
+- Whole-shape translate in 2D preserves each vertex's own height exactly. The 3D path applies a rigid
+  `EPSG:4978` delta, which drifts ellipsoidal height by roughly (shape extent x drag distance / earth
+  radius) across a curved earth; 2D now applies the shift geodetically instead.
+- Vertices created on a 2D map are explicitly given height `0`, in the map's own reference before any
+  reprojection, rather than inheriting whatever the raycast reported.
+
+### Changed
+
+- Internal: which handles are on offer is now decided in one place
+  (`effectiveHandlePositions`) that both hit-testing and drawing consume, replacing two matching sets
+  of conditions that had to be kept in step by hand. No behavioural change in 3D.
+
 ## 0.1.5
 
 ### Fixed

@@ -35,6 +35,8 @@ import {
 import {findClosestVertexIndex} from "../handle/VertexHitTest.js";
 import {computePointHandlePositions, type PointHandlePositions} from "../handle/PointHandleLayout.js";
 import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js";
+import {isGeocentricMap} from "../handle/mapMode.js";
+import {offsetPointOnScreen} from "../handle/screenOffset.js";
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
 import {HtmlToolbar, type HtmlToolbarLabels} from "../handle/HtmlToolbar.js";
 import {add, distance, normalize, sub, toPoint} from "../math/Vector3Util.js";
@@ -181,8 +183,8 @@ export interface Shape3DEditControllerOptions {
    * Small, 3D-anchored icons are harder to hit reliably with a finger than a fixed on-screen
    * button, and can end up tiny or off-screen at a distance/bad angle - this is meant as a
    * touch-friendly *alternative*, not an addition: whichever is active, the other is not drawn/
-   * hit-tested at all (see drawFullHandleSet/fullHandleCandidates), so there's never a duplicate or
-   * an invisible-but-still-clickable icon.
+   * hit-tested at all (see effectiveHandlePositions), so there's never a duplicate or an
+   * invisible-but-still-clickable icon.
    *
    * `labels` only ever supplies `aria-label`/`title` attributes (for screen readers, which can't
    * read an icon) - never visible button text - so a consuming app only needs to translate these
@@ -227,10 +229,24 @@ export interface Shape3DEditControllerOptions {
  * while whole-shape mode is armed, since rotating a single vertex around itself is meaningless;
  * and a click-only pair below the vertex - a checkmark ("finish", confirm and end editing, down-right)
  * and an X ("cancel", discard and end editing, down-left), grouped together and deliberately
- * separated from the shape-adjusting handles above/beside the vertex. The move/height/finish/
- * cancel/shiftToggle/remove/rotate handles only appear on a 3D (EPSG:4978) map - see
- * HandleInteractions.ts's verticalMovePointInteraction guard - and shiftToggle/rotate additionally
- * require a shape with more than one vertex, so a Point never shows either.
+ * separated from the shape-adjusting handles above/beside the vertex. shiftToggle/rotate require a
+ * shape with more than one vertex, so a Point never shows either.
+ *
+ * On a 2D (projected/grid reference) map the same handle set is offered, laid out with screen-pixel
+ * offsets instead of world directions (see PointHandleLayout), with two deliberate differences:
+ * "height" is never offered, since a projected reference has no per-location "up" to drag along; and
+ * "move" appears only while whole-shape mode is armed, because in 2D the vertex icon itself already
+ * moves in the horizontal plane with the height frozen, so an unarmed move handle would merely
+ * duplicate it. Height in 2D is set numerically instead, via `setVertexPosition` or the
+ * `htmlToolbar` height input.
+ *
+ * The other 2D difference is what a drag does to Z. In 3D, "free" re-drapes the vertex onto whatever
+ * surface is under the cursor, X/Y/Z alike. In 2D there is no height information to raycast against
+ * at all, so Z is treated as a value the user set deliberately and no drag may disturb: dragging a
+ * vertex changes X/Y only, whole-shape translate moves every vertex geodetically while each keeps
+ * its own Z, and rotate was already height-preserving. A vertex created on a 2D map gets Z = 0 (see
+ * CreationSession), and a midpoint promoted there lands at the average of its two neighbours'
+ * heights, after which it behaves like any other vertex.
  *
  * Nothing is persisted by this controller itself - it only mutates the shape it creates/is given.
  * Callers should persist (if at all) only in response to `ShapeEditingFinished` with
@@ -273,6 +289,18 @@ export class Shape3DEditController extends Controller {
   private _htmlToolbarLabels: HtmlToolbarLabels | undefined;
   /** Created in onActivate/destroyed in onDeactivate, only when `_htmlToolbar`. */
   private _toolbar: HtmlToolbar | null = null;
+
+  /**
+   * Whether the map this controller is activated on is 2D (a projected/grid reference) rather than
+   * 3D (geocentric). Latched once in onActivate rather than re-derived per gesture/frame: RIA's own
+   * `map.reference` setter sets `map.controller = null` when the reference changes (confirmed in
+   * RIAMap.d.ts), so a controller can never survive a 2D/3D switch - the mode is fixed for the whole
+   * lifetime of an activated session, and reading it once makes that invariant explicit.
+   *
+   * `false` until onActivate runs. Every read site is inside a gesture/draw path, all of which can
+   * only run on an activated controller, so the pre-activation default is never observed.
+   */
+  private _is2D = false;
 
   private _phase: Phase;
   private _shape: EditableShape | null;
@@ -547,6 +575,7 @@ export class Shape3DEditController extends Controller {
 
   override onActivate(map: WebGLMap): void {
     super.onActivate(map);
+    this._is2D = !isGeocentricMap(map);
     this._mapChangeHandle = map.on("MapChange", () => this.invalidate());
     if (this._phase === Phase.CREATING) {
       this._creationCursorHandle = map.cursorManager.addCursor("crosshair");
@@ -762,34 +791,58 @@ export class Shape3DEditController extends Controller {
   }
 
   /**
-   * The full handle candidate set offered by whichever target (a real vertex or a virtual
-   * midpoint) is currently active - free/move/height always, plus finish/cancel only
-   * when `htmlToolbar` is off (see below), plus remove only when `canRemove` (a virtual, not yet
-   * promoted midpoint has nothing to remove; a shape at its minimum vertex count can't lose one
-   * either - see ShapeEditStrategy.canRemoveVertex), plus shiftToggle only when
-   * `wholeShapeAvailable` (see wholeShapeModeAvailable - there's nothing for whole-shape mode to
-   * carry along on a single-vertex shape, so the toggle isn't offered), plus rotate only when
-   * `armed` (whole-shape mode) - rotating a single vertex around itself is meaningless, and rotate
-   * is scoped to real vertices only (a midpoint isn't a committed pivot), so callers always pass
-   * `false` for it at the midpoint call site. It's one or the other for finish/cancel, never both:
-   * with `htmlToolbar` on, the canvas finish/cancel icons aren't drawn either (see
-   * drawFullHandleSet), so there'd be nothing visible to hit-test against - excluding them here
-   * keeps hover/click/drag from ever recognizing an invisible hit zone in that area. Same goes for
-   * shiftToggle: this one list feeds hover, click AND drag, so withholding it here withdraws the
-   * handle from all three at once, matching drawFullHandleSet's own matching exclusion.
+   * Nulls out every handle position that isn't actually on offer for the currently active target (a
+   * real vertex or a virtual midpoint), leaving the ones that are.
+   *
+   * This is THE single place that decides what exists. `null` means "withdrawn," and both consumers
+   * honour it by construction: handleCandidates (which feeds hover, click AND drag) skips null
+   * positions, and drawFullHandleSet draws only what's non-null. Deciding it once here is what
+   * guarantees an icon can never be invisible-but-still-clickable, or drawn-but-not-grabbable - the
+   * two failure modes an earlier version guarded against by repeating the same conditions in both
+   * places and hoping they stayed in step.
+   *
+   * The rules:
+   * - `free` is always offered.
+   * - `height` is 3D-only, and already arrives null from a 2D layout (see PointHandleLayout) - so
+   *   there is deliberately no rule for it here.
+   * - `move` is always offered in 3D. In 2D it is offered ONLY while whole-shape mode is armed,
+   *   because there it is purely the "translate every vertex" affordance: an unarmed 2D move handle
+   *   would duplicate `free`, which already moves in the plane with the height frozen.
+   * - `shiftToggle` needs something to carry along (see wholeShapeModeAvailable) - never on a
+   *   single-vertex shape, so never on a Point.
+   * - `remove` needs `canRemove` - a shape at its minimum vertex count can't lose one, and a
+   *   not-yet-promoted midpoint has no vertex to remove in the first place.
+   * - `rotate` needs whole-shape mode armed (rotating a lone vertex around itself is a no-op) AND
+   *   `rotateAllowed`, which is false for a midpoint: a virtual midpoint isn't a committed pivot.
+   * - `finish`/`cancel` are withheld when `htmlToolbar` is on, since that option replaces these two
+   *   canvas icons with DOM buttons rather than adding to them.
    */
-  private static fullHandleCandidates(
-      positions: PointHandlePositions, htmlToolbar: boolean, canRemove: boolean,
-      armed: boolean, wholeShapeAvailable: boolean): Array<[HandleKind, Point | null]> {
-    const candidates: Array<[HandleKind, Point | null]> =
-        [["free", positions.free], ["move", positions.move], ["height", positions.height],
-         ["shiftToggle", wholeShapeAvailable ? positions.shiftToggle : null],
-         ["remove", canRemove ? positions.remove : null],
-         ["rotate", armed ? positions.rotate : null]];
-    if (!htmlToolbar) {
-      candidates.push(["finish", positions.finish], ["cancel", positions.cancel]);
-    }
-    return candidates;
+  private effectiveHandlePositions(
+      positions: PointHandlePositions, canRemove: boolean, rotateAllowed: boolean): PointHandlePositions {
+    const armed = this._shiftWholeShapeToggled;
+    return {
+      free: positions.free,
+      move: this._is2D && !armed ? null : positions.move,
+      height: positions.height,
+      shiftToggle: this.wholeShapeModeAvailable ? positions.shiftToggle : null,
+      remove: canRemove ? positions.remove : null,
+      rotate: armed && rotateAllowed ? positions.rotate : null,
+      finish: this._htmlToolbar ? null : positions.finish,
+      cancel: this._htmlToolbar ? null : positions.cancel,
+    };
+  }
+
+  /**
+   * Flattens already-effective positions (see effectiveHandlePositions) into the kind/position pairs
+   * hover, click and drag all iterate over. No gating of its own - every decision was made upstream,
+   * so this stays a pure shape change.
+   */
+  private static handleCandidates(positions: PointHandlePositions): Array<[HandleKind, Point | null]> {
+    return [
+      ["free", positions.free], ["move", positions.move], ["height", positions.height],
+      ["shiftToggle", positions.shiftToggle], ["remove", positions.remove], ["rotate", positions.rotate],
+      ["finish", positions.finish], ["cancel", positions.cancel],
+    ];
   }
 
   /**
@@ -814,9 +867,8 @@ export class Shape3DEditController extends Controller {
       // to just its plain marker.
       const candidates: Array<[HandleKind, Point | null]> =
           this._activeSegmentIndex === null && i === this._activeVertexIndex
-              ? Shape3DEditController.fullHandleCandidates(
-                  positions, this._htmlToolbar, this._strategy.canRemoveVertex(shape, i),
-                  this._shiftWholeShapeToggled, this.wholeShapeModeAvailable)
+              ? Shape3DEditController.handleCandidates(
+                  this.effectiveHandlePositions(positions, this._strategy.canRemoveVertex(shape, i), true))
               : [["free", positions.free]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -843,8 +895,8 @@ export class Shape3DEditController extends Controller {
       const b = this._strategy.getVertex(shape, (i + 1) % count);
       const midpointPosition = computeSegmentMidpointPosition(map, a, b);
       const candidates: Array<[HandleKind, Point | null]> = this._activeSegmentIndex === i
-          ? Shape3DEditController.fullHandleCandidates(computePointHandlePositions(map, midpointPosition),
-              this._htmlToolbar, false, false, this.wholeShapeModeAvailable)
+          ? Shape3DEditController.handleCandidates(this.effectiveHandlePositions(
+              computePointHandlePositions(map, midpointPosition), false, false))
           : [["midpoint", midpointPosition]];
       for (const [kind, position] of candidates) {
         if (!position) {
@@ -1058,9 +1110,22 @@ export class Shape3DEditController extends Controller {
         // visual's own "start" edge (drawn in drawEditHandles) has a fixed reference to draw from.
         handle.rotationStartAzimuth = azimuthToGroundProjectedPoint(map, event.viewPoint, handle.dragStartWGS84);
       } else {
+        // "free" means something different in each map mode, and this is where that split lives.
+        //
+        // In 3D it re-drapes onto whatever surface is under the cursor, X/Y/Z alike - the same
+        // behaviour as the original creation click. In 2D that would silently flatten the vertex:
+        // freeMovePointInteraction's raycast goes through LocationMode.CLOSEST_SURFACE, which per
+        // RIA's own docs "has an effect on 3D maps only" and yields no height information at all on
+        // a 2D map. Since the vertex icon is also the ONLY drag handle an unarmed 2D session offers,
+        // that would make every 2D drag destroy the vertex's height.
+        //
+        // So in 2D it routes to the horizontal interaction instead, which already does exactly what
+        // is wanted here - X/Y follow the cursor, Z re-imposed from the vertex's original value -
+        // and needs no 2D-specific code of its own.
+        const horizontalOnly = kind === "move" || this._is2D;
         handle.interactionFunction =
             kind === "height" ? verticalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
-            kind === "move" ? horizontalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
+            horizontalOnly ? horizontalMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef) :
             freeMovePointInteraction(map, event.viewPoint, anchorPointInShapeRef);
       }
 
@@ -1097,6 +1162,13 @@ export class Shape3DEditController extends Controller {
       // compound on top of the previous frame's rotation instead of recomputing a fresh, correct
       // absolute result each time (the same reason move/height's own whole-shape branches below
       // always read from allVerticesStartWGS84, never from the live shape, while a drag is active).
+      //
+      // INVARIANT, load-bearing for the `!` below: allVerticesStartWGS84 is populated ONLY inside
+      // the `if (shiftWholeShape)` block above, and rotate is offered ONLY while whole-shape mode is
+      // armed (effectiveHandlePositions). Those are the same flag, so the two move in lockstep and
+      // the array is always there by the time a rotate drag reaches this line. Offering rotate
+      // unarmed - in either map mode - would make this a TypeError on the drag's first frame, so if
+      // that gating ever changes, this array must start being captured for rotate unconditionally.
       this.rotateOtherVerticesAround(handle.dragStartWGS84!, deltaAzimuth, handle.vertexIndex, handle.allVerticesStartWGS84!);
       this.emitShapeChanged();
       this.invalidate();
@@ -1114,6 +1186,17 @@ export class Shape3DEditController extends Controller {
           updated.z += heightDelta;
           this._strategy.moveVertex(shape, i, createTransformation(WGS_84, shape.reference!).transform(updated));
         });
+      } else if (this._is2D) {
+        // 2D: deliberately NOT the rigid Cartesian delta the 3D branch below uses. A straight-line
+        // EPSG:4978 translation across a curved earth does not preserve each vertex's own
+        // ellipsoidal height - it drifts by roughly (shape extent * drag distance / earth radius),
+        // which is centimetres for kilometre-scale editing but is not zero. In 2D a vertex's height
+        // is a value the user set deliberately and that no drag may disturb, so the shift is applied
+        // geodetically: one bearing + distance, re-walked from every vertex's own start position,
+        // each keeping its own Z untouched. Exactly the technique rotate already uses.
+        const azimuth = WGS84_GEODESY.forwardAzimuth(handle.dragStartWGS84!, resultWGS84);
+        const shiftDistance = WGS84_GEODESY.distance(handle.dragStartWGS84!, resultWGS84);
+        this.translateAllVerticesGeodetic(handle.allVerticesStartWGS84, azimuth, shiftDistance);
       } else {
         // "move" - the delta must be a Cartesian vector (EPSG:4978), not a raw WGS84 lon/lat
         // difference: degrees-per-meter-of-longitude varies by latitude, so adding a raw lon/lat
@@ -1134,6 +1217,34 @@ export class Shape3DEditController extends Controller {
     this.emitShapeChanged();
     this.invalidate();
     return EVENT_HANDLED;
+  }
+
+  /**
+   * Moves EVERY vertex by the same bearing and distance, leaving each one's own height exactly as it
+   * was - the 2D whole-shape translate. `startPositionsWGS84` must be each vertex's position at drag
+   * start (`EditHandle.allVerticesStartWGS84`), never the shape's live/already-mutated positions:
+   * the total offset-from-start is re-applied to the pristine start every frame, so frames never
+   * compound on top of each other (the same reason rotateOtherVerticesAround below reads it).
+   *
+   * A zero-length or non-finite shift is skipped rather than applied: `forwardAzimuth` between two
+   * identical points has no defined bearing, and feeding that into `interpolate` would write NaN
+   * coordinates onto the shape. This happens for real on a drag's first frame, before the cursor has
+   * actually moved.
+   *
+   * Extracted as its own method - sibling to rotateOtherVerticesAround, and for the same reason - so
+   * it can be unit-tested directly without simulating a full drag gesture.
+   */
+  private translateAllVerticesGeodetic(
+      startPositionsWGS84: Point[], azimuthDegrees: number, distanceMeters: number): void {
+    if (!Number.isFinite(azimuthDegrees) || !Number.isFinite(distanceMeters) || distanceMeters === 0) {
+      return;
+    }
+    const shape = this._shape!;
+    startPositionsWGS84.forEach((vertexWGS84, i) => {
+      const moved = WGS84_GEODESY.interpolate(vertexWGS84, distanceMeters, azimuthDegrees);
+      const newPoint = createPoint(WGS_84, [moved.x, moved.y, vertexWGS84.z]);
+      this._strategy.moveVertex(shape, i, createTransformation(WGS_84, shape.reference!).transform(newPoint));
+    });
   }
 
   /**
@@ -1193,7 +1304,7 @@ export class Shape3DEditController extends Controller {
    * minimum vertex count) - shared by double-click/double-tap removal (`removeVertexNear`, which
    * hit-tests to find `index`) and the `remove` handle's click (which already knows `index` is
    * `_activeVertexIndex`, and that it's removable, since the handle candidate is gated on
-   * `canRemoveVertex` in the first place - see `fullHandleCandidates`).
+   * `canRemoveVertex` in the first place - see `effectiveHandlePositions`).
    */
   private removeVertexAtIndex(index: number): HandleEventResult {
     const shape = this._shape!;
@@ -1306,24 +1417,30 @@ export class Shape3DEditController extends Controller {
     return {...positions, [key]: this.offsetPointUpOnScreen(map, original, TOUCH_DRAG_OFFSET_PIXELS)};
   }
 
+  /**
+   * Screen y grows downward, hence the negated `pixels` - callers pass a positive "lift the icon
+   * this far above the fingertip" distance. Falls back to the unmoved point when the offset can't
+   * be computed (an off-screen vertex): a touch drag with the icon drawn at its true position is
+   * still perfectly usable, unlike the handle-layout call sites, which treat null as "no handle."
+   */
   private offsetPointUpOnScreen(map: WebGLMap, point: Point, pixels: number): Point {
-    try {
-      const view = map.mapToViewTransformation.transform(point);
-      const offsetView = createPoint(null, [view.x, view.y - pixels]);
-      return map.viewToMapTransformation.transform(offsetView);
-    } catch (e) {
-      return point;
-    }
+    return offsetPointOnScreen(map, point, 0, -pixels) ?? point;
   }
 
   /**
-   * Draws the free/move/height/finish/cancel handle set at `positions` - shared by the active
-   * vertex and the active midpoint, the only two things that ever get the full set. `shiftHeld`
-   * only affects the move/height icons' size, independent of `activeKind`'s color - see the new
-   * `*_SHIFT_ICON_STYLE` constants.
+   * Draws the handle set at `positions` - shared by the active vertex and the active midpoint, the
+   * only two things that ever get the full set.
+   *
+   * `positions` MUST already have been through effectiveHandlePositions: every handle here is drawn
+   * purely on whether its position is non-null, with no gating conditions of its own. That's what
+   * keeps what's drawn and what's hit-testable identical by construction rather than by two
+   * matching sets of conditions kept in step by hand.
+   *
+   * Whole-shape mode still affects the move/height icons' SIZE (the `*_SHIFT_ICON_STYLE` constants)
+   * independently of `activeKind`'s colour - that's appearance, not availability, so it stays here.
    */
   private drawFullHandleSet(
-      geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null, canRemove: boolean): void {
+      geoCanvas: GeoCanvas, positions: PointHandlePositions, activeKind: HandleKind | null): void {
     if (activeKind === "free") {
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_ICON_STYLE);
       geoCanvas.drawIcon(positions.free, VERTEX_FOCUSED_OCCLUDED_ICON_STYLE);
@@ -1345,43 +1462,35 @@ export class Shape3DEditController extends Controller {
       geoCanvas.drawIcon(positions.height, style);
       geoCanvas.drawIcon(positions.height, occludedStyle);
     }
-    // Withheld entirely on a single-vertex shape (see wholeShapeModeAvailable), matching
-    // fullHandleCandidates' own exclusion so nothing invisible stays hoverable/clickable.
-    if (positions.shiftToggle && this.wholeShapeModeAvailable) {
+    if (positions.shiftToggle) {
       const [style, occludedStyle] = this._shiftWholeShapeToggled ?
           [SHIFT_TOGGLE_ON_ICON_STYLE, SHIFT_TOGGLE_ON_OCCLUDED_ICON_STYLE] :
           [SHIFT_TOGGLE_OFF_ICON_STYLE, SHIFT_TOGGLE_OFF_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.shiftToggle, style);
       geoCanvas.drawIcon(positions.shiftToggle, occludedStyle);
     }
-    if (positions.remove && canRemove) {
+    if (positions.remove) {
       const [style, occludedStyle] = activeKind === "remove" ?
           [REMOVE_HANDLE_FOCUSED_ICON_STYLE, REMOVE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [REMOVE_HANDLE_DEFAULT_ICON_STYLE, REMOVE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.remove, style);
       geoCanvas.drawIcon(positions.remove, occludedStyle);
     }
-    // Only while armed - rotating a single vertex around itself is meaningless, so unlike
-    // move/height (which read this._shiftWholeShapeToggled only to pick a *bigger* icon), rotate
-    // reads it to decide whether to draw anything at all.
-    if (positions.rotate && this._shiftWholeShapeToggled) {
+    if (positions.rotate) {
       const [style, occludedStyle] = activeKind === "rotate" ?
           [ROTATE_HANDLE_FOCUSED_ICON_STYLE, ROTATE_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [ROTATE_HANDLE_DEFAULT_ICON_STYLE, ROTATE_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.rotate, style);
       geoCanvas.drawIcon(positions.rotate, occludedStyle);
     }
-    // One or the other, never both - the htmlToolbar option is a full replacement for these two
-    // icons, not an addition alongside them (matching fullHandleCandidates' matching exclusion,
-    // which keeps a now-invisible icon from also staying hoverable/clickable).
-    if (positions.finish && !this._htmlToolbar) {
+    if (positions.finish) {
       const [style, occludedStyle] = activeKind === "finish" ?
           [FINISH_HANDLE_FOCUSED_ICON_STYLE, FINISH_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [FINISH_HANDLE_DEFAULT_ICON_STYLE, FINISH_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
       geoCanvas.drawIcon(positions.finish, style);
       geoCanvas.drawIcon(positions.finish, occludedStyle);
     }
-    if (positions.cancel && !this._htmlToolbar) {
+    if (positions.cancel) {
       const [style, occludedStyle] = activeKind === "cancel" ?
           [CANCEL_HANDLE_FOCUSED_ICON_STYLE, CANCEL_HANDLE_FOCUSED_OCCLUDED_ICON_STYLE] :
           [CANCEL_HANDLE_DEFAULT_ICON_STYLE, CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE];
@@ -1419,7 +1528,10 @@ export class Shape3DEditController extends Controller {
           i === this._hoveredVertexIndex ? this._hoveredHandleKind :
           null;
       this.drawFullHandleSet(
-          geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind, this._strategy.canRemoveVertex(shape, i));
+          geoCanvas,
+          this.withTouchDragOffset(
+              map, this.effectiveHandlePositions(positions, this._strategy.canRemoveVertex(shape, i), true), activeKind),
+          activeKind);
     }
 
     // Virtual per-segment midpoint markers - recomputed live from the current vertex list every
@@ -1455,7 +1567,8 @@ export class Shape3DEditController extends Controller {
               ? this._activeHandle.kind :
           this._hoveredSegmentIndex === i ? this._hoveredHandleKind :
           null;
-      this.drawFullHandleSet(geoCanvas, this.withTouchDragOffset(map, positions, activeKind), activeKind, false);
+      this.drawFullHandleSet(geoCanvas,
+          this.withTouchDragOffset(map, this.effectiveHandlePositions(positions, false, false), activeKind), activeKind);
     }
 
     const handle = this._activeHandle;
@@ -1472,7 +1585,10 @@ export class Shape3DEditController extends Controller {
     // Centered on the live dragged position (not the drag's start), so the grid visually tracks
     // the point as it slides. Only for the horizontal (move) handle - that's the one interaction
     // this is meant to visually ground ("you're sliding along this flat surface").
-    if (this._showPlane && handle?.kind === "move" && handle.currentWGS84) {
+    // 3D only: the grid is built in EPSG:4978 around the local ellipsoid normal, which has no
+    // meaning in a projected reference. It's also redundant in 2D, where the map itself already IS
+    // the horizontal plane the drag is constrained to - there's nothing to visually ground.
+    if (this._showPlane && !this._is2D && handle?.kind === "move" && handle.currentWGS84) {
       const centerEpsg4978 = WGS84_TO_EPSG4978.transform(handle.currentWGS84);
       const up = normalize(centerEpsg4978);
       const size = distance(map.camera.eye, centerEpsg4978) * MOVE_PLANE_SIZE_FACTOR;
@@ -1501,7 +1617,12 @@ export class Shape3DEditController extends Controller {
     const dropLineAnchorWGS84 = handle?.kind === "height" ? handle.dragStartWGS84 :
         handle?.kind === "move" ? handle.currentWGS84 :
         handle?.kind === "rotate" ? handle.dragStartWGS84 : null;
-    if (this._showDropLine && dropLineAnchorWGS84) {
+    // 3D only, and for the same reason: the line runs from the anchor to the EPSG:4978 origin -
+    // Earth's centre - which is not a place a 2D map can draw a line to. Its whole purpose is the
+    // occlusion cue ("this has reached the ground/a building"), and a 2D map has no depth to occlude
+    // against. Note this matters for "move" too, not just "rotate": move exists in 2D once
+    // whole-shape mode is armed.
+    if (this._showDropLine && !this._is2D && dropLineAnchorWGS84) {
       const topEpsg4978 = WGS84_TO_EPSG4978.transform(dropLineAnchorWGS84);
       const earthCenterEpsg4978 = {x: 0, y: 0, z: 0};
       const dropLine = createPolyline(EPSG_4978,
@@ -1528,9 +1649,11 @@ export class Shape3DEditController extends Controller {
             createTransformation(activeVertexPositions.rotate.reference!, WGS_84).transform(activeVertexPositions.rotate);
         const radius = WGS84_GEODESY.distance(pivotWGS84, rotateIconWGS84);
         const band2D = createArcBand(WGS_84, pivotWGS84, 0, radius, handle.rotationStartAzimuth, handle.rotationDeltaDegrees);
-        // Flat 2D shapes need an explicit height to sit correctly in 3D - same reasoning the
-        // toolbox's own RotateHandleSupport.toExtrudedShape uses.
-        const band = createExtrudedShape(WGS_84, band2D, pivotWGS84.z, pivotWGS84.z);
+        // In 3D, a flat shape needs an explicit height to sit correctly in the scene - same reasoning
+        // the toolbox's own RotateHandleSupport.toExtrudedShape uses. On a 2D map there is no height
+        // to sit at, and an extruded shape isn't something a 2D map renders, so the flat arc band is
+        // used directly - which is exactly the right shape for a flat map anyway.
+        const band = this._is2D ? band2D : createExtrudedShape(WGS_84, band2D, pivotWGS84.z, pivotWGS84.z);
         geoCanvas.drawShape(band, ROTATE_ARC_BAND_STYLE);
         geoCanvas.drawShape(band, ROTATE_ARC_BAND_OCCLUDED_STYLE);
       }

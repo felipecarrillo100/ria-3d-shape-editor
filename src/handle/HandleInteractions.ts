@@ -44,6 +44,7 @@ import {createEllipsoidalGeodesy} from "@luciad/ria/geodesy/GeodesyFactory.js";
 import {add, cross, distanceAlongDirection, rayPlaneIntersection, sub, toPoint} from "../math/Vector3Util.js";
 import {calculatePointingDirection} from "../math/PerspectiveCameraUtil.js";
 import {raycastClosestSurface} from "./raycastClosestSurface.js";
+import {isGeocentricMap} from "./mapMode.js";
 
 const WGS_84 = getReference("CRS:84");
 const EPSG_4978 = getReference("EPSG:4978");
@@ -108,7 +109,7 @@ export const horizontalMovePointInteraction = (map: WebGLMap, viewPoint: Point,
  */
 export const verticalMovePointInteraction = (map: WebGLMap, viewPoint: Point,
                                               modelPoint: Point): (point: Point) => Point => {
-  if (!map.reference.equals(EPSG_4978)) {
+  if (!isGeocentricMap(map)) {
     //Disable vertical movement on 2D maps
     return (): Point => modelPoint;
   }

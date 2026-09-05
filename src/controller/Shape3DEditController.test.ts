@@ -236,24 +236,87 @@ describe("Shape3DEditController whole-shape mode availability", () => {
     expect((controller as any).wholeShapeModeAvailable).toBe(false);
   });
 
-  // fullHandleCandidates only reads properties off `positions`, so a plain literal stands in for a
-  // real PointHandlePositions.
-  const positions = () => {
-    const p = createPoint(REFERENCE, [0, 0, 0]);
-    return {free: p, move: p, height: p, finish: p, cancel: p, shiftToggle: p, remove: p, rotate: p};
-  };
-  const kindsWithAPosition = (wholeShapeAvailable: boolean): string[] =>
-      (Shape3DEditController as any)
-          .fullHandleCandidates(positions(), false, false, false, wholeShapeAvailable)
-          .filter(([, position]: [string, unknown]) => position !== null)
-          .map(([kind]: [string, unknown]) => kind);
+  it("withholds the shiftToggle position when whole-shape mode is unavailable", () => {
+    const degenerate = createPolyline(REFERENCE, [[0, 0, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYLINE, fakeLayer, {existingShape: degenerate});
 
-  it("withholds the shiftToggle candidate when whole-shape mode is unavailable", () => {
-    expect(kindsWithAPosition(false)).not.toContain("shiftToggle");
+    expect(offeredKinds(controller)).not.toContain("shiftToggle");
   });
 
-  it("offers the shiftToggle candidate when whole-shape mode is available", () => {
-    expect(kindsWithAPosition(true)).toContain("shiftToggle");
+  it("offers the shiftToggle position when whole-shape mode is available", () => {
+    const line = createPolyline(REFERENCE, [[0, 0, 0], [1, 1, 1]]);
+    const controller = new Shape3DEditController(ShapeType.POLYLINE, fakeLayer, {existingShape: line});
+
+    expect(offeredKinds(controller)).toContain("shiftToggle");
+  });
+});
+
+// effectiveHandlePositions is the one place that decides which handles exist at all, for hover,
+// click, drag AND drawing alike - so these assert the gating rules directly rather than trying to
+// simulate gestures. It only reads properties off `positions`, so a plain literal stands in for a
+// real PointHandlePositions.
+const allPositionsPresent = () => {
+  const p = createPoint(REFERENCE, [0, 0, 0]);
+  return {free: p, move: p, height: p, finish: p, cancel: p, shiftToggle: p, remove: p, rotate: p};
+};
+
+/** The handle kinds left with a non-null position, i.e. the ones actually on offer. */
+const offeredKinds = (
+    controller: Shape3DEditController,
+    {canRemove = false, rotateAllowed = false} = {},
+): string[] => {
+  const effective = (controller as any)
+      .effectiveHandlePositions(allPositionsPresent(), canRemove, rotateAllowed);
+  return Object.entries(effective)
+      .filter(([, position]) => position !== null)
+      .map(([kind]) => kind);
+};
+
+/** A two-vertex Polyline controller, optionally latched into 2D mode and/or with whole-shape armed. */
+const controllerFor2DTests = ({is2D = false, armed = false} = {}) => {
+  const line = createPolyline(REFERENCE, [[0, 0, 0], [1, 1, 1]]);
+  const controller = new Shape3DEditController(ShapeType.POLYLINE, fakeLayer, {existingShape: line});
+  // Both are normally set by onActivate / a shiftToggle click, neither of which is reachable without
+  // a real map and gesture stream.
+  (controller as any)._is2D = is2D;
+  (controller as any)._shiftWholeShapeToggled = armed;
+  return controller;
+};
+
+describe("Shape3DEditController 2D handle gating", () => {
+  it("offers move unconditionally in 3D, armed or not", () => {
+    expect(offeredKinds(controllerFor2DTests({is2D: false, armed: false}))).toContain("move");
+    expect(offeredKinds(controllerFor2DTests({is2D: false, armed: true}))).toContain("move");
+  });
+
+  // In 2D the vertex icon itself already moves in-plane with the height frozen, so an unarmed move
+  // handle would just duplicate it - it exists there purely as the "translate every vertex" grip.
+  it("withholds move in 2D until whole-shape mode is armed", () => {
+    expect(offeredKinds(controllerFor2DTests({is2D: true, armed: false}))).not.toContain("move");
+    expect(offeredKinds(controllerFor2DTests({is2D: true, armed: true}))).toContain("move");
+  });
+
+  it("still offers the vertex, toggle, finish and cancel handles in an unarmed 2D session", () => {
+    const kinds = offeredKinds(controllerFor2DTests({is2D: true, armed: false}), {canRemove: true});
+    expect(kinds).toEqual(expect.arrayContaining(["free", "shiftToggle", "remove", "finish", "cancel"]));
+  });
+
+  // Rotate's per-frame maths reads EditHandle.allVerticesStartWGS84, which is only populated when a
+  // drag starts with whole-shape mode armed - so offering rotate unarmed would throw on the first
+  // drag frame. This is the assertion that keeps those two in lockstep.
+  it("only offers rotate while armed, in both 2D and 3D", () => {
+    for (const is2D of [false, true]) {
+      expect(offeredKinds(controllerFor2DTests({is2D, armed: false}), {rotateAllowed: true}))
+          .not.toContain("rotate");
+      expect(offeredKinds(controllerFor2DTests({is2D, armed: true}), {rotateAllowed: true}))
+          .toContain("rotate");
+    }
+  });
+
+  // A virtual midpoint isn't a committed pivot, so its call site passes rotateAllowed: false.
+  it("never offers rotate for a midpoint, even while armed", () => {
+    expect(offeredKinds(controllerFor2DTests({is2D: true, armed: true}), {rotateAllowed: false}))
+        .not.toContain("rotate");
   });
 });
 
@@ -354,5 +417,67 @@ describe("Shape3DEditController.rotateOtherVerticesAround()", () => {
     expect(pivotAfter.x).toBeCloseTo(0);
     expect(pivotAfter.y).toBeCloseTo(0);
     expect(pivotAfter.z).toBeCloseTo(0);
+  });
+});
+
+// The 2D whole-shape translate. Asserted directly rather than through a drag gesture, for the same
+// reason the rotate tests above are: the maths is where a mistake would silently move real geometry,
+// and reaching it via a gesture would need a real map/camera/WebGL.
+describe("Shape3DEditController.translateAllVerticesGeodetic()", () => {
+  const geodesy = createEllipsoidalGeodesy(WGS_84);
+
+  // Vertices at DIFFERENT heights, spread far enough apart that a rigid Cartesian translation would
+  // measurably disturb them - that's the failure this whole method exists to avoid.
+  const startPositions = () => [
+    createPoint(WGS_84, [4.0, 50.0, 0]),
+    createPoint(WGS_84, [4.5, 50.2, 137.5]),
+    createPoint(WGS_84, [4.2, 50.4, -12.25]),
+  ];
+
+  const controllerWithThreeVertices = () => {
+    const polygon = createPolygon(WGS_84, [[4.0, 50.0, 0], [4.5, 50.2, 137.5], [4.2, 50.4, -12.25]]);
+    return new Shape3DEditController(ShapeType.POLYGON, wgs84Layer, {existingShape: polygon});
+  };
+
+  it("moves every vertex by the same bearing and distance", () => {
+    const controller = controllerWithThreeVertices();
+    const starts = startPositions();
+
+    (controller as any).translateAllVerticesGeodetic(starts, 45, 500);
+
+    const shape = controller.shape as Polygon;
+    for (let i = 0; i < starts.length; i++) {
+      const moved = shape.getPoint(i);
+      expect(geodesy.distance(starts[i], moved)).toBeCloseTo(500, 1);
+      expect(normalizeSignedDegrees(geodesy.forwardAzimuth(starts[i], moved) - 45)).toBeCloseTo(0, 1);
+    }
+  });
+
+  // The whole point of the method: this is what a rigid EPSG:4978 delta would get wrong.
+  it("leaves every vertex's height exactly untouched", () => {
+    const controller = controllerWithThreeVertices();
+    const starts = startPositions();
+
+    (controller as any).translateAllVerticesGeodetic(starts, 137, 25000);
+
+    const shape = controller.shape as Polygon;
+    expect(shape.getPoint(0).z).toBeCloseTo(0, 6);
+    expect(shape.getPoint(1).z).toBeCloseTo(137.5, 6);
+    expect(shape.getPoint(2).z).toBeCloseTo(-12.25, 6);
+  });
+
+  // A drag's first frame reports zero movement, and forwardAzimuth between two identical points has
+  // no defined bearing - writing that through would put NaN coordinates on the shape.
+  it("is a no-op for a zero-distance or non-finite shift, rather than writing NaN", () => {
+    for (const [azimuth, dist] of [[45, 0], [NaN, 500], [45, NaN]] as Array<[number, number]>) {
+      const controller = controllerWithThreeVertices();
+
+      (controller as any).translateAllVerticesGeodetic(startPositions(), azimuth, dist);
+
+      const shape = controller.shape as Polygon;
+      expect(shape.getPoint(1).x).toBeCloseTo(4.5, 9);
+      expect(shape.getPoint(1).y).toBeCloseTo(50.2, 9);
+      expect(shape.getPoint(1).z).toBeCloseTo(137.5, 9);
+    }
   });
 });

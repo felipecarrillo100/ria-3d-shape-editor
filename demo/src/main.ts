@@ -17,39 +17,57 @@ import { ShapeType } from '@luciad/ria/shape/ShapeType.js'
 import { Shape3DEditController } from 'ria-3d-shape-editor'
 import type { EditableShape, SupportedShapeType, UomFamily } from 'ria-3d-shape-editor'
 
-const reference = getReference('EPSG:4978')
+// The 3D side of the 2D/3D toggle has to be geocentric - RIA only draws a globe on EPSG:4978 -
+// so WebMercator is the 2D half. The feature model keeps EPSG:4978 either way: model coordinates
+// are transformed to whatever the map's reference currently is, so shapes created in one mode stay
+// put (and stay editable, heights included) in the other.
+const REFERENCE_3D = getReference('EPSG:4978')
+const REFERENCE_2D = getReference('EPSG:3857')
+
+const reference = REFERENCE_3D
 const map = new RIAMap(document.getElementById('map') as HTMLDivElement, { reference })
 
-WMSTileSetModel.createFromURL(
-  'https://sampleservices.luciad.com/wms',
-  [{ layer: '4ceea49c-3e7c-4e2d-973d-c608fb2fb07e' }],
-  {},
-).then((model) => {
-  map.layerTree.addChild(new WMSTileSetLayer(model, { label: 'Imagery' }))
-})
-
-// A real mesh (buildings, not just terrain/imagery) so people have something convenient to edit
-// near/behind/on top of - occlusion coloring, "went underground," etc. are much easier to try out
-// against actual 3D structures than a bare globe. Once loaded, fly to a small box centered on the
-// dataset's own extent - dead center of a dense city mesh is a safe bet for "near a building"
-// without needing to hardcode this dataset's actual coordinates.
-OGC3DTilesModel.create('https://sampleservices.luciad.com/ogc/3dtiles/marseille-mesh/tileset.json').then((model) => {
-  map.layerTree.addChild(new TileSet3DLayer(model, { label: 'Marseille mesh' }))
-
-  const bounds = model.bounds
-  const buildingScale = 150
-  const closeBounds = createBounds(bounds.reference, [
-    bounds.x + bounds.width / 2 - buildingScale / 2, buildingScale,
-    bounds.y + bounds.height / 2 - buildingScale / 2, buildingScale,
-    bounds.z + bounds.depth / 2 - buildingScale / 2, buildingScale,
-  ])
-  map.mapNavigator.fit({ bounds: closeBounds, animate: true }).catch((err: unknown) => console.error('fit failed:', err))
-})
-
+// The editable layer's model/layer are built synchronously, before the tile sets are awaited below,
+// so every toolbar handler and controller further down this file has a `layer` to close over from
+// the moment the module runs. Only its placement in the layer tree waits.
 const store = new MemoryStore()
 const model = new FeatureModel(store, { reference })
 const layer = new FeatureLayer(model, { label: 'Shapes (MemoryStore)', selectable: true, hoverable: true })
+
+// A real mesh (buildings, not just terrain/imagery) so people have something convenient to edit
+// near/behind/on top of - occlusion coloring, "went underground," etc. are much easier to try out
+// against actual 3D structures than a bare globe.
+//
+// Both models are fetched in parallel and awaited together, rather than each adding its own layer
+// from a `.then()`. That's purely about stacking order: `addChild` defaults to "top", so
+// then-callbacks would order the layers by whichever network request happened to finish first, and
+// would bury the editable layer underneath both (it being the only one added synchronously). Adding
+// all three here, after the await, makes the three lines below literally the stacking order - no
+// `position` arguments, nothing timing-dependent to reason about.
+const [wmsModel, meshModel] = await Promise.all([
+  WMSTileSetModel.createFromURL(
+    'https://sampleservices.luciad.com/wms',
+    [{ layer: '4ceea49c-3e7c-4e2d-973d-c608fb2fb07e' }],
+    {},
+  ),
+  OGC3DTilesModel.create('https://sampleservices.luciad.com/ogc/3dtiles/marseille-mesh/tileset.json'),
+])
+
+// Bottom to top.
+map.layerTree.addChild(new WMSTileSetLayer(wmsModel, { label: 'Imagery' }))
+map.layerTree.addChild(new TileSet3DLayer(meshModel, { label: 'Marseille mesh' }))
 map.layerTree.addChild(layer)
+
+// Fly to a small box centered on the mesh's own extent - dead center of a dense city mesh is a safe
+// bet for "near a building" without needing to hardcode this dataset's actual coordinates.
+const bounds = meshModel.bounds
+const buildingScale = 150
+const closeBounds = createBounds(bounds.reference, [
+  bounds.x + bounds.width / 2 - buildingScale / 2, buildingScale,
+  bounds.y + bounds.height / 2 - buildingScale / 2, buildingScale,
+  bounds.z + bounds.depth / 2 - buildingScale / 2, buildingScale,
+])
+map.mapNavigator.fit({ bounds: closeBounds, animate: true }).catch((err: unknown) => console.error('fit failed:', err))
 
 // FeatureLayer.setEditedObject exists at runtime but isn't declared in RIA's public .d.ts - see
 // the equivalent workaround (and the reason it's needed: without it, the layer keeps rendering a
@@ -117,10 +135,38 @@ function startEdit(feature: Feature): void {
   setActiveButton('btn-edit')
 }
 
+// RIAMap.reference can only be swapped wholesale: the setter tears down and rebuilds the render
+// context (layers unload and reload, map.controller is reset to null), and it saves/restores the
+// camera state across the switch so the view stays roughly where it was.
+const dimensionButton = document.getElementById('btn-dimension') as HTMLButtonElement
+let is3D = true
+
+function syncDimensionButton(): void {
+  dimensionButton.textContent = is3D ? 'Switch to 2D' : 'Switch to 3D'
+}
+
+dimensionButton.addEventListener('click', () => {
+  // Drop the controller first so an in-progress create/edit is torn down through the normal
+  // deactivate path - that emits ShapeEditingFinished with confirmed:false, which is what clears
+  // the layer's edited object. Letting the reference setter null out map.controller instead would
+  // leave an existing feature stuck in its hidden, mid-edit state.
+  map.controller = null
+  is3D = !is3D
+  map.reference = is3D ? REFERENCE_3D : REFERENCE_2D
+  syncDimensionButton()
+})
+
+syncDimensionButton()
+
 document.getElementById('btn-point')!.addEventListener('click', () => startCreate('point'))
 document.getElementById('btn-line')!.addEventListener('click', () => startCreate('line'))
 document.getElementById('btn-polygon')!.addEventListener('click', () => startCreate('polygon'))
-document.getElementById('btn-select')!.addEventListener('click', () => {
+// Dropping the controller abandons any in-progress create/edit (onDeactivate emits
+// ShapeEditingFinished with confirmed:false, so nothing reaches the store) and hands input back to
+// map.defaultController - i.e. navigation plus the hover/click selection that arms "Edit Selected".
+// It doubles as the idle-state indicator: this is the button setActiveButton() falls back to
+// whenever map.controller goes null, including when a session finishes on its own.
+document.getElementById('btn-cancel')!.addEventListener('click', () => {
   map.controller = null
 })
 
@@ -141,7 +187,7 @@ editButton.addEventListener('click', () => {
 map.on('ControllerChanged', (newController) => {
   if (!newController) {
     activeController = null
-    setActiveButton('btn-select')
+    setActiveButton('btn-cancel')
   }
 })
 

@@ -12,6 +12,7 @@ import {CoordinateReference} from "@luciad/ria/reference/CoordinateReference.js"
 import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
 import type {EditableShape, ShapeEditStrategy} from "../strategy/ShapeEditStrategy.js";
 import {raycastClosestSurface} from "../handle/raycastClosestSurface.js";
+import {isGeocentricMap} from "../handle/mapMode.js";
 
 export type CreationClickResult = "placed" | "finished" | "ignored";
 export type CreationDoubleClickResult = "finished" | "ignored";
@@ -43,6 +44,19 @@ export class CreationSession<S extends EditableShape> {
     const touched = raycastClosestSurface(map, viewPoint);
     if (!touched) {
       return null;
+    }
+    // A 2D map carries no height information at all: LocationMode.CLOSEST_SURFACE "has an effect on
+    // 3D maps only" per RIA's own docs, so whatever Z the raycast reports there is not a real
+    // elevation. Every vertex created on a 2D map therefore gets height 0 explicitly, rather than
+    // trusting the raycast to already say 0 - callers can raise it afterwards via
+    // Shape3DEditController.setVertexPosition or the htmlToolbar height input.
+    //
+    // ORDER IS LOAD-BEARING: this happens while the point is still in map.reference (a projected
+    // reference, where Z is a height above the ellipsoid and 0 means "on the ellipsoid"), BEFORE the
+    // transform into targetReference below. Zeroing afterwards would be wrong for a geocentric
+    // target reference, where Z is an ECEF axis - z=0 there is the equatorial plane, not the ground.
+    if (!isGeocentricMap(map)) {
+      touched.z = 0;
     }
     return touched.reference!.equals(this.targetReference)
         ? touched

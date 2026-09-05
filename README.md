@@ -20,9 +20,9 @@ npm install ria-3d-shape-editor
   package bundles no part of LuciadRIA and depends on no `@luciad/ria-toolbox-*` package at runtime.
 - **ESM only.** The package is `"type": "module"` and ships a single ESM build, so `require()` fails
   with `ERR_REQUIRE_ESM`. Use `import`, via a bundler (Vite, webpack, Rollup) or native ESM.
-- **A geocentric (`EPSG:4978`) map** for the full handle set. On a 2D map the controller still
-  creates and edits shapes, but the height/rotate/whole-shape handles don't appear - there is no
-  well-defined "up" for them. See [Editing height on a 2D map](#editing-height-on-a-2d-map).
+- **A geocentric (`EPSG:4978`) map** for height editing. 2D (projected) maps are fully supported for
+  everything else - the controller detects the map's mode on activation and adapts. See
+  [2D maps](#2d-maps).
 
 ## Usage
 
@@ -173,7 +173,31 @@ reprojects for you: a real backend rejects geometry in the wrong reference (GeoS
 geocentric geometry for a geographic-native layer). Passing `layer` is how the controller learns the
 one reference its output must be in.
 
-### Editing height on a 2D map
+### 2D maps
+
+The controller detects whether its map is geocentric (`EPSG:4978`) or projected when it is activated,
+and adapts. On a 2D map you get the same handles, laid out with screen-pixel offsets instead of world
+directions, with two differences:
+
+- **No height handle.** A projected reference has no per-location "up" to drag along. Set height
+  numerically instead - see below.
+- **The move handle appears only while whole-shape mode is armed.** In 2D the vertex icon itself
+  already moves in the horizontal plane with the height frozen, so an unarmed move handle would just
+  duplicate it. There it is purely the "translate every vertex" grip.
+
+Height is treated as a value you set deliberately and that no drag may disturb:
+
+| Action | Effect on Z in 2D |
+| --- | --- |
+| Creating a vertex | `0` - a 2D map carries no height information to read |
+| Dragging a vertex | Unchanged; X/Y only |
+| Whole-shape translate | Every vertex keeps its own Z (a geodetic shift, not a Cartesian one) |
+| Whole-shape rotate | Every vertex keeps its own Z |
+| Promoting a midpoint | The average of its two neighbours' heights, then fixed like any vertex |
+
+Rotate draws a flat arc band in 2D; the drop line and the reference-plane grid are 3D-only.
+
+#### Setting height on a 2D map
 
 The height handle is 3D-only. On a 2D map, drive height from your own UI instead:
 
@@ -204,9 +228,9 @@ overlapping icons.
 
 | Handle | Gesture | Effect |
 | --- | --- | --- |
-| Vertex itself ("free") | drag | Moves in X/Y/Z, continuously adopting whatever terrain/mesh surface is under the cursor |
-| Move | drag | Moves in X/Y only - height frozen |
-| Height | drag | Moves in Z only - X/Y frozen |
+| Vertex itself ("free") | drag | Moves in X/Y/Z, continuously adopting whatever terrain/mesh surface is under the cursor. In 2D: X/Y only, height frozen |
+| Move | drag | Moves in X/Y only - height frozen. In 2D: shown only while whole-shape mode is armed |
+| Height | drag | Moves in Z only - X/Y frozen. 3D only |
 | Rotate | drag | Swings the whole shape horizontally around this vertex, which stays fixed as the pivot - only shown while whole-shape mode is armed |
 | Remove | click/tap | Removes this vertex outright (also reachable via double-click/double-tap anywhere near a vertex) |
 | Whole-shape toggle | click/tap | Arms/disarms whole-shape mode (see below) - only on a shape with more than one vertex, so never on a `Point` |
@@ -214,9 +238,9 @@ overlapping icons.
 | Cancel | click/tap | Discards changes made this session and ends editing |
 | Midpoint marker | click to select, then drag one of its own handles | Promotes that segment's midpoint into a real vertex |
 
-Move/Height/Rotate/Remove/the toggle/Finish/Cancel only appear on a 3D (`EPSG:4978`, geocentric)
-map view - on a 2D map there's no well-defined "up" to make height or rotation meaningful. Use
-`controller.setVertexPosition(index, point)` to set a height programmatically in that case.
+Height is 3D-only, and Move is 3D-only unless whole-shape mode is armed - see [2D maps](#2d-maps)
+for the full 2D handle set and the rules that keep Z untouched there. Use
+`controller.setVertexPosition(index, point)` to set a height programmatically on a 2D map.
 
 The toggle and Rotate have a second condition: the shape must have more than one vertex. A `Point`
 therefore never shows either - there is no "every other vertex" for whole-shape mode to carry along,
