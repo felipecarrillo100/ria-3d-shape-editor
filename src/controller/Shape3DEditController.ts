@@ -38,7 +38,13 @@ import {computeSegmentMidpointPosition} from "../handle/MidpointHandleLayout.js"
 import {horizontalPlaneGridLines} from "../handle/horizontalPlaneGrid.js";
 import {HtmlToolbar, type HtmlToolbarLabels} from "../handle/HtmlToolbar.js";
 import {add, distance, normalize, sub, toPoint} from "../math/Vector3Util.js";
-import {formatLength, type UomFamily} from "../uom/formatLength.js";
+import {
+  baseUnitSymbol,
+  baseUnitToMeters,
+  formatLength,
+  metersToBaseUnit,
+  type UomFamily,
+} from "../uom/formatLength.js";
 import {
   CANCEL_HANDLE_DEFAULT_ICON_STYLE,
   CANCEL_HANDLE_DEFAULT_OCCLUDED_ICON_STYLE,
@@ -169,8 +175,9 @@ export interface Shape3DEditControllerOptions {
   /**
    * When set (`true`, or an options object), renders Finish/Cancel as HTML icon buttons (X/
    * checkmark, matching the GeoCanvas-drawn icons - not text, so nothing here needs translation)
-   * - and, while editing, a live/editable height input (a bare "m" unit suffix, also
-   * translation-free) for the active vertex - instead of the GeoCanvas-drawn checkmark/X icons.
+   * - and, while editing, a live/editable height input (a bare unit symbol, "m" or "ft" per the
+   * active `uom` family, also translation-free) for the active vertex - instead of the
+   * GeoCanvas-drawn checkmark/X icons.
    * Small, 3D-anchored icons are harder to hit reliably with a finger than a fixed on-screen
    * button, and can end up tiny or off-screen at a distance/bad angle - this is meant as a
    * touch-friendly *alternative*, not an addition: whichever is active, the other is not drawn/
@@ -564,14 +571,18 @@ export class Shape3DEditController extends Controller {
   }
 
   /**
-   * Applies a typed height (in meters, WGS84 ellipsoidal height) to the currently active vertex -
-   * the `htmlToolbar` height input's commit handler. If a midpoint is merely selected but not yet
-   * promoted, promotes it into a real vertex first, at its current (pre-edit) position - the same
-   * `insertVertex` call already used when dragging one of its handles does the same promotion (see
-   * handleEditDrag) - so this is exactly as O(1)/scalable as that already-existing path,
-   * regardless of how many vertices the shape has.
+   * Applies a typed height to the currently active vertex - the `htmlToolbar` height input's commit
+   * handler. `value` arrives in the active `uom` family's BASE unit (meters or feet), matching the
+   * symbol the toolbar renders beside the input, and is converted to meters here; the toolbar
+   * itself does no unit maths (see HtmlToolbarCallbacks.onHeightCommit). The resulting height is a
+   * WGS84 ellipsoidal height, as everywhere else in this controller.
+   *
+   * If a midpoint is merely selected but not yet promoted, promotes it into a real vertex first, at
+   * its current (pre-edit) position - the same `insertVertex` call already used when dragging one of
+   * its handles does the same promotion (see handleEditDrag) - so this is exactly as O(1)/scalable
+   * as that already-existing path, regardless of how many vertices the shape has.
    */
-  private applyHeightInput(meters: number): void {
+  private applyHeightInput(value: number): void {
     const shape = this._shape;
     const map = this.map as WebGLMap | null;
     if (!shape || !map) {
@@ -590,6 +601,7 @@ export class Shape3DEditController extends Controller {
       this._activeSegmentIndex = null;
       this.emitShapeChanged();
     }
+    const meters = baseUnitToMeters(value, this._uom);
     const vertex = this._strategy.getVertex(shape, this._activeVertexIndex);
     const vertexWGS84 = createTransformation(vertex.reference!, WGS_84).transform(vertex);
     this.setVertexPosition(this._activeVertexIndex, createPoint(WGS_84, [vertexWGS84.x, vertexWGS84.y, meters]));
@@ -1500,7 +1512,12 @@ export class Shape3DEditController extends Controller {
           : activeMidpointInMapRef
               ? createTransformation(activeMidpointInMapRef.reference!, WGS_84).transform(activeMidpointInMapRef)
               : null;
-      this._toolbar.setHeightValue(activeTargetWGS84?.z ?? null);
+      // In the family's BASE unit (never the scaled one): unlike the drag label, an editable field
+      // can't re-unit itself as the value crosses a threshold without a typed number changing
+      // meaning mid-edit. The symbol goes along so the toolbar renders what the number actually is.
+      this._toolbar.setHeightValue(
+          activeTargetWGS84 === null ? null : metersToBaseUnit(activeTargetWGS84.z, this._uom),
+          baseUnitSymbol(this._uom));
     }
   }
 

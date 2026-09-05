@@ -204,6 +204,41 @@ describe("Shape3DEditController.cancel()", () => {
 // double-click/double-tap removal (removeVertexNear) - exercised directly here rather than
 // through a simulated gesture, since hit-testing/positioning already has its own coverage
 // elsewhere (PointHandleLayout) and isn't what this behavior is about.
+// The htmlToolbar height input is expressed in the uom family's BASE unit (m or ft), so a typed
+// value has to be converted before it becomes a WGS84 ellipsoidal height. Exercised through the
+// controller's own applyHeightInput rather than the toolbar itself: HtmlToolbar needs a real DOM,
+// which this repo's node-environment tests deliberately don't provide - but this is the half where
+// a mistake would silently persist a vertex at the wrong altitude.
+describe("Shape3DEditController.applyHeightInput()", () => {
+  const lineAtZeroHeight = () => createPolyline(WGS_84, [[4.0, 50.0, 0], [4.001, 50.0, 0]]);
+
+  const controllerFor = (uom: "metric" | "imperial" | "nautical") => {
+    const line = lineAtZeroHeight();
+    const controller = new Shape3DEditController(ShapeType.POLYLINE, wgs84Layer, {existingShape: line, uom});
+    Object.defineProperty(controller, "map", {get: () => fakeMap, configurable: true});
+    return {line, controller};
+  };
+
+  it("treats a typed value as meters for the metric family", () => {
+    const {line, controller} = controllerFor("metric");
+
+    (controller as any).applyHeightInput(100);
+
+    expect(line.getPoint(0).z).toBeCloseTo(100, 6);
+  });
+
+  it("treats a typed value as feet for the imperial and nautical families", () => {
+    for (const uom of ["imperial", "nautical"] as const) {
+      const {line, controller} = controllerFor(uom);
+
+      (controller as any).applyHeightInput(100);
+
+      // 100ft * 0.3048 = 30.48m
+      expect(line.getPoint(0).z).toBeCloseTo(30.48, 6);
+    }
+  });
+});
+
 describe("Shape3DEditController.removeVertexAtIndex()", () => {
   it("removes the targeted vertex when the shape has more than its minimum vertex count", () => {
     const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);

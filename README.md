@@ -145,10 +145,34 @@ still live-updatable).
 | --- | --- | --- | --- |
 | `existingShape` | `EditableShape` | - | Start directly in edit mode on this shape instead of creating a new one |
 | `vertexHitPixelTolerance` | `number` | `12` | Pixel radius for a mouse click/hover to count as targeting a handle (touch always gets a larger effective floor, see above) |
-| `uom` | `"metric" \| "imperial"` | `"metric"` | Unit family for the live drag label |
+| `uom` | `"metric" \| "imperial" \| "nautical"` | `"metric"` | Unit family for every number the editor displays - the live drag label and the `htmlToolbar` height input (see [Units](#units)) |
 | `showPlane` | `boolean` | `true` | Draw a translucent ground-reference grid while dragging Move |
 | `showDropLine` | `boolean` | `true` | Draw a line from the drag anchor straight down to Earth's center while dragging Height/Move/Rotate |
 | `htmlToolbar` | `boolean \| {labels?}` | `false` | Touch-friendly HTML Finish/Cancel/height-input alternative (see above) |
+
+### Units
+
+`uom` picks a family, not a single unit. Within a family, the live drag label auto-scales by
+magnitude, so a kilometre-scale shape doesn't produce an unreadably long number:
+
+| Family | Below the threshold | At/above it | Threshold |
+| --- | --- | --- | --- |
+| `metric` | metres - `12.34m` | kilometres - `2.00km` | 1000 m |
+| `imperial` | feet - `997.38ft` | miles - `1.24mi` | 305 m (~1000 ft) |
+| `nautical` | feet - `997.38ft` | nautical miles - `1.08NM` | 305 m (~1000 ft) |
+
+Height deltas and horizontal distances deliberately share that one rule, so a tall drag reads
+`+2.00km` rather than `+2000.00m`. The threshold compares absolute value, so a negative height delta
+scales the same way (`-2.00km`). The swept-angle label shown while rotating is always degrees, and
+is unaffected by `uom`.
+
+The one exception is `htmlToolbar`'s height **input**, which always uses the family's *base* unit -
+metres for `metric`, feet for both others - with a matching symbol beside it. An editable field
+can't re-unit itself as the value crosses a threshold without a number you already typed silently
+changing meaning, so it stays put; a value you type is always in the unit shown next to it.
+
+Nothing about the geometry changes with `uom`: the shape itself is always in `layer.model.reference`,
+and `setVertexPosition` always takes a `Point` in a real reference. This option is display-only.
 
 ## Public API
 

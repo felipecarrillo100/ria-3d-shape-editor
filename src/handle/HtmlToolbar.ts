@@ -7,7 +7,8 @@
 //
 // Cancel/Finish are icon buttons (X/checkmark), not text, for the exact same reason the
 // GeoCanvas-drawn handles use icons rather than text: a symbol needs no translation. The height
-// input keeps only a bare "m" unit suffix - already near-universal - rather than a full word.
+// input carries only a bare unit symbol ("m"/"ft", supplied by the caller from the active `uom`
+// family) rather than a full word, for the same reason.
 // Nothing here is hardcoded English text a consuming app can't change: `labels` only ever supplies
 // `aria-label`/`title` attributes (for screen readers, which can't read an icon), not visible text.
 
@@ -58,8 +59,12 @@ export interface HtmlToolbarLabels {
 export interface HtmlToolbarCallbacks {
   onCancel(): void;
   onFinish(): void;
-  /** Called with the committed value, in meters, when the height input is confirmed (Enter/blur). */
-  onHeightCommit(meters: number): void;
+  /**
+   * Called when the height input is confirmed (Enter/blur), with the raw number the user typed - in
+   * whatever unit the most recent `setHeightValue` named, NOT necessarily meters. The caller owns
+   * the conversion, so all unit maths stays in one place.
+   */
+  onHeightCommit(value: number): void;
 }
 
 /**
@@ -73,6 +78,12 @@ export class HtmlToolbar {
   private readonly _finishButton: HTMLButtonElement;
   private readonly _heightWrapper: HTMLSpanElement;
   private readonly _heightInput: HTMLInputElement;
+  private readonly _heightUnit: HTMLSpanElement;
+  /**
+   * The unit symbol currently rendered, so setHeightValue - called on every redraw - only touches
+   * the DOM when it actually changes.
+   */
+  private _heightUnitSymbol: string | null = null;
 
   constructor(mapDomNode: HTMLElement, callbacks: HtmlToolbarCallbacks, labels?: HtmlToolbarLabels) {
     this._container = document.createElement("div");
@@ -92,10 +103,9 @@ export class HtmlToolbar {
     this._heightInput.type = "number";
     this._heightInput.className = "ria-3d-shape-editor-height-input";
     this._heightInput.setAttribute("style", HEIGHT_INPUT_STYLE);
-    const heightUnit = document.createElement("span");
-    heightUnit.className = "ria-3d-shape-editor-height-unit";
-    heightUnit.setAttribute("style", HEIGHT_UNIT_STYLE);
-    heightUnit.textContent = "m";
+    this._heightUnit = document.createElement("span");
+    this._heightUnit.className = "ria-3d-shape-editor-height-unit";
+    this._heightUnit.setAttribute("style", HEIGHT_UNIT_STYLE);
     const commitHeight = () => {
       const value = Number(this._heightInput.value);
       if (Number.isFinite(value)) {
@@ -109,7 +119,7 @@ export class HtmlToolbar {
     });
     this._heightInput.addEventListener("blur", commitHeight);
     this._heightWrapper.appendChild(this._heightInput);
-    this._heightWrapper.appendChild(heightUnit);
+    this._heightWrapper.appendChild(this._heightUnit);
 
     this._finishButton = document.createElement("button");
     this._finishButton.type = "button";
@@ -165,19 +175,27 @@ export class HtmlToolbar {
   }
 
   /**
-   * Shows and syncs the height input to `meters` (hides it when `null` - e.g. no single active
-   * vertex, such as while a midpoint is merely selected but not yet promoted). Never overwrites
-   * the input's value while it currently has focus, so a live sync (called every redraw) never
-   * fights the user mid-typing.
+   * Shows and syncs the height input to `value`, expressed in the unit `unitSymbol` names (hides it
+   * when `value` is `null` - e.g. no single active target). The caller converts: this class holds no
+   * opinion on units beyond rendering the symbol it is handed.
+   *
+   * Never overwrites the input's value while it has focus, so a live sync (called every redraw)
+   * doesn't fight the user mid-typing - EXCEPT when the unit itself changed (a live `uom` switch),
+   * where leaving the stale number under a new symbol would silently relabel e.g. 25.00m as 25.00ft.
    */
-  setHeightValue(meters: number | null): void {
-    if (meters === null) {
+  setHeightValue(value: number | null, unitSymbol: string): void {
+    if (value === null) {
       this._heightWrapper.style.display = "none";
       return;
     }
     this._heightWrapper.style.display = "";
-    if (document.activeElement !== this._heightInput) {
-      this._heightInput.value = meters.toFixed(2);
+    const unitChanged = unitSymbol !== this._heightUnitSymbol;
+    if (unitChanged) {
+      this._heightUnit.textContent = unitSymbol;
+      this._heightUnitSymbol = unitSymbol;
+    }
+    if (unitChanged || document.activeElement !== this._heightInput) {
+      this._heightInput.value = value.toFixed(2);
     }
   }
 

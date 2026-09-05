@@ -15,7 +15,7 @@ import { FeatureLayer } from '@luciad/ria/view/feature/FeatureLayer.js'
 import { Feature } from '@luciad/ria/model/feature/Feature.js'
 import { ShapeType } from '@luciad/ria/shape/ShapeType.js'
 import { Shape3DEditController } from 'ria-3d-shape-editor'
-import type { EditableShape, SupportedShapeType } from 'ria-3d-shape-editor'
+import type { EditableShape, SupportedShapeType, UomFamily } from 'ria-3d-shape-editor'
 
 const reference = getReference('EPSG:4978')
 const map = new RIAMap(document.getElementById('map') as HTMLDivElement, { reference })
@@ -66,10 +66,24 @@ const SHAPE_TYPE_MAP: Record<string, SupportedShapeType> = {
 }
 
 const htmlToolbarCheckbox = document.getElementById('chk-html-toolbar') as HTMLInputElement
+const uomSelect = document.getElementById('sel-uom') as HTMLSelectElement
+
+// Tracked so the Units dropdown can retarget the LIVE session via updateController() rather than
+// only affecting the next one - switching units mid-drag is exactly what that option is for.
+let activeController: Shape3DEditController | null = null
+
+function selectedUom(): UomFamily {
+  return uomSelect.value as UomFamily
+}
+
+uomSelect.addEventListener('change', () => {
+  activeController?.updateController({ uom: selectedUom() })
+})
 
 function startCreate(kind: keyof typeof SHAPE_TYPE_MAP): void {
   const ctrl = new Shape3DEditController(SHAPE_TYPE_MAP[kind], layer,
-    {htmlToolbar: htmlToolbarCheckbox.checked})
+    {htmlToolbar: htmlToolbarCheckbox.checked, uom: selectedUom()})
+  activeController = ctrl
   ctrl.on('ShapeEditingFinished', ({ shape, confirmed }) => {
     if (!confirmed) return
     const feature = new Feature(shape, {})
@@ -87,7 +101,8 @@ function startEdit(feature: Feature): void {
   const shapeType = shape.type as SupportedShapeType
   setEditedObject(layer, feature)
   const ctrl = new Shape3DEditController(shapeType, layer,
-    { existingShape: shape as EditableShape, htmlToolbar: htmlToolbarCheckbox.checked })
+    { existingShape: shape as EditableShape, htmlToolbar: htmlToolbarCheckbox.checked, uom: selectedUom() })
+  activeController = ctrl
   ctrl.on('ShapeEditingFinished', ({ shape: editedShape, confirmed }) => {
     if (!confirmed) {
       setEditedObject(layer, null)
@@ -124,7 +139,10 @@ editButton.addEventListener('click', () => {
 })
 
 map.on('ControllerChanged', (newController) => {
-  if (!newController) setActiveButton('btn-select')
+  if (!newController) {
+    activeController = null
+    setActiveButton('btn-select')
+  }
 })
 
 function setActiveButton(activeId: string): void {

@@ -42,6 +42,21 @@
       font-size: 13px;
       padding: 0 4px;
     }
+    #toolbar select {
+      font-size: 13px;
+      padding: 4px 6px;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: white;
+    }
+    /* The dropdown list itself is drawn by the OS and doesn't inherit the dark toolbar background,
+       so give the options an explicit dark pair - otherwise white-on-white on some platforms. */
+    #toolbar select option {
+      background: rgb(40, 40, 40);
+      color: white;
+    }
   </style>
 </head>
 <body>
@@ -55,6 +70,14 @@
     <label>
       <input type="checkbox" id="chk-html-toolbar" />
       HTML toolbar (touch-friendly)
+    </label>
+    <label>
+      Units
+      <select id="sel-uom">
+        <option value="metric">Metric (m/km)</option>
+        <option value="imperial">Imperial (ft/mi)</option>
+        <option value="nautical">Nautical (ft/NM)</option>
+      </select>
     </label>
   </div>
   <script type="module" src="/src/bootstrap.ts"></script>
