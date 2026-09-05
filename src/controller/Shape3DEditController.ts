@@ -441,13 +441,14 @@ export class Shape3DEditController extends Controller {
 
   /**
    * Reverts the shape entirely to its value when this controller was constructed (only meaningful
-   * when constructed with an existing shape) - both vertex positions and vertex count/order. A
-   * vertex removed mid-session (double-click, the only vertex-count-changing gesture reachable
-   * during editing - there is no vertex-add gesture outside CreationSession) is re-inserted at its
-   * original index. This is a blunt, position-by-index overwrite for the overlapping range plus an
-   * append of whatever original tail vertices don't have a current slot - correct regardless of
-   * where a vertex was removed, since it never tries to track "which original vertex is this," it
-   * just reconstructs the exact original sequence numerically.
+   * when constructed with an existing shape) - both vertex positions and vertex count/order. The
+   * count can move in EITHER direction mid-session: a vertex is removed by double-click/the remove
+   * handle, and one is ADDED by promoting a virtual midpoint into a real vertex (handleEditDrag and
+   * applyHeightInput both insert one). So this drops any trailing surplus, then does a blunt,
+   * position-by-index overwrite of the overlapping range, then appends whatever original tail
+   * vertices don't have a current slot - correct regardless of where a vertex was added or removed,
+   * since it never tries to track "which original vertex is this," it just reconstructs the exact
+   * original sequence numerically.
    */
   cancel(): void {
     if (this._phase !== Phase.EDITING || !this._shape || !this._originalShapeSnapshot) {
@@ -455,21 +456,61 @@ export class Shape3DEditController extends Controller {
     }
     const shape = this._shape;
     const original = this._originalShapeSnapshot;
-    const currentCount = this._strategy.vertexCount(shape);
     const originalCount = this._strategy.vertexCount(original);
+    // Drop vertices this session ADDED (midpoint promotion) before the position loops below, which
+    // only ever overwrite/append and would otherwise leave the surplus in place - one extra vertex
+    // duplicating the last original one, per cancelled session, compounding, since the shape is
+    // mutated in place and survives into the next session's own snapshot.
+    //
+    // removeLastVertex, NOT removeVertex, is deliberate: it is the unguarded trailing-drop
+    // primitive, whereas removeVertex throws unless canRemoveVertex's `pointCount > minVertexCount`
+    // holds. Nothing validates existingShape's vertex count (the constructor checks only its type),
+    // and a Polygon is a closed ring - so a 2-point one still exposes a promotable closing-segment
+    // midpoint, and truncating 3 -> 2 there would fail that guard and throw out of endEditing()
+    // before `map.controller = null`, leaving an editing session that can never be closed. Never
+    // runs for a Point (vertexCount() is always 1 there, and a Point has no segment to promote in
+    // the first place), the same way the insertVertex call below is already unreachable for one.
+    while (this._strategy.vertexCount(shape) > originalCount) {
+      this._strategy.removeLastVertex(shape);
+    }
+    const currentCount = this._strategy.vertexCount(shape);
     const sharedCount = Math.min(currentCount, originalCount);
     for (let i = 0; i < sharedCount; i++) {
       this._strategy.moveVertex(shape, i, this._strategy.getVertex(original, i));
     }
     for (let i = sharedCount; i < originalCount; i++) {
-      this._strategy.insertVertex(shape, i, this._strategy.getVertex(original, i));
+      // .copy() is required: insertPoint stores the Point BY REFERENCE (unlike move3DPoint just
+      // above, which copies raw x/y/z), so handing it the snapshot's own live getVertex() view would
+      // alias the snapshot into the edited shape - editing that vertex afterwards would silently
+      // rewrite the snapshot, and a second cancel() could no longer restore it. Same guard
+      // CreationSession already applies before its own appendVertex calls.
+      this._strategy.insertVertex(shape, i, this._strategy.getVertex(original, i).copy());
     }
-    // Defensive - the double-click-removal handler already keeps this correct throughout a
-    // session, so this is not expected to ever actually change anything.
-    this._activeVertexIndex = Math.min(this._activeVertexIndex, originalCount - 1);
+    // Load-bearing, not defensive: promoting a Polygon's CLOSING segment sets _activeVertexIndex to
+    // `segmentIndex + 1 === count` (handleEditDrag/applyHeightInput), which the truncation above has
+    // just put out of range - and it is read unguarded by drawEditHandles' htmlToolbar height sync
+    // on every frame, by the rotate arc-band branch, and by applyHeightInput. Math.max covers a
+    // 0-vertex snapshot, where `originalCount - 1` would be -1.
+    this._activeVertexIndex = Math.max(0, Math.min(this._activeVertexIndex, originalCount - 1));
     // A selected-but-not-yet-promoted midpoint's segment identity isn't tracked across a revert -
     // simplest to just deselect back to the (now valid again) active vertex.
     this._activeSegmentIndex = null;
+    // cancel() is public, so a caller may revert and KEEP editing rather than ending the session -
+    // possibly from a ShapeChanged listener, which fires on every drag frame. An in-flight drag
+    // captured its vertexIndex/allVerticesStartWGS84 against the pre-revert vertex list, so letting
+    // it continue would index past the end; abandon it, exactly as handleEditDragEnd does. This
+    // could not happen before the truncation above existed, since cancel() never used to shrink the
+    // vertex count.
+    this._activeHandle?.endInteraction();
+    this._activeHandle = null;
+    this._dragGestureChecked = false;
+    // Stale hover indices can't crash (every read site is a bare === inside an `i < count` loop) and
+    // the next updateHoverState recomputes them from scratch anyway, but clearing them keeps one
+    // post-revert frame from highlighting a target that no longer exists - same reasoning as
+    // removeVertexAtIndex's own stale-hover reset.
+    this._hoveredVertexIndex = null;
+    this._hoveredSegmentIndex = null;
+    this._hoveredHandleKind = null;
     this.invalidate();
     this.emitShapeChanged();
   }

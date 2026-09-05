@@ -37,8 +37,11 @@ export interface ShapeEditStrategy<S extends EditableShape = EditableShape> {
   removeVertex(shape: S, index: number): void;
   /**
    * Inserts a new, already-committed vertex at `index` (unlike `appendVertex`, which is
-   * specifically for the creation-time rubber-band vertex and always appends at the end). Used by
-   * `cancel()` to restore a vertex removed mid-edit-session. Never called for Point.
+   * specifically for the creation-time rubber-band vertex and always appends at the end). Used to
+   * promote a virtual midpoint into a real vertex, and by `cancel()` to restore a vertex removed
+   * mid-edit-session - `cancel()` pairs it with `removeLastVertex` for the opposite direction,
+   * dropping vertices a promotion added. Implementations must not retain `point` itself: RIA's
+   * `insertPoint` stores it by reference, so callers hand over a copy. Never called for Point.
    */
   insertVertex(shape: S, index: number, point: Point): void;
 

@@ -1,11 +1,13 @@
 import {describe, expect, it} from "vitest";
-import {createPoint, createPolygon} from "@luciad/ria/shape/ShapeFactory.js";
+import {createPoint, createPolygon, createPolyline} from "@luciad/ria/shape/ShapeFactory.js";
 import {Polygon} from "@luciad/ria/shape/Polygon.js";
+import {Polyline} from "@luciad/ria/shape/Polyline.js";
 import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
 import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
 import {createEllipsoidalGeodesy} from "@luciad/ria/geodesy/GeodesyFactory.js";
 import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
 import {FeatureLayer} from "@luciad/ria/view/feature/FeatureLayer.js";
+import {RIAMap} from "@luciad/ria/view/RIAMap.js";
 import {EVENT_HANDLED, EVENT_IGNORED} from "@luciad/ria/view/controller/HandleEventResult.js";
 import {Shape3DEditController} from "./Shape3DEditController.js";
 
@@ -19,6 +21,13 @@ const normalizeSignedDegrees = (degrees: number): number => ((degrees % 360) + 5
 // `layer.model.reference`, so a minimal stand-in is enough and keeps the tests independent of any
 // backend.
 const fakeLayer = {model: {reference: REFERENCE}} as unknown as FeatureLayer;
+// Same stand-in, for the tests whose shape must live in a geographic reference: applyHeightInput
+// reprojects the active vertex through WGS84, and an EPSG:4978 vertex near [0,0,0] sits at Earth's
+// centre, where that reprojection is degenerate.
+const wgs84Layer = {model: {reference: WGS_84}} as unknown as FeatureLayer;
+// computeSegmentMidpointPosition (and therefore applyHeightInput) reads nothing off the map but its
+// reference, so this is all a midpoint promotion needs - no camera, no DOM, no WebGL.
+const fakeMap = {reference: REFERENCE} as unknown as RIAMap;
 
 describe("Shape3DEditController constructor", () => {
   it("starts in the creating phase with no existing shape", () => {
@@ -72,6 +81,122 @@ describe("Shape3DEditController.cancel()", () => {
       expect(vertex.x).toBeCloseTo(x);
       expect(vertex.y).toBeCloseTo(y);
     });
+  });
+
+  // The opposite direction from the test above: a vertex can also be ADDED mid-session, by promoting
+  // a virtual midpoint into a real one. Simulated here the same way the removal test above simulates
+  // its own gesture - cancel() is the unit under test, and how the vertex got there is incidental to
+  // it (the real promotion path gets its own test just below).
+  it("removes a vertex added mid-session by a midpoint promotion, restoring the original count", () => {
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+    (controller as any)._strategy.insertVertex(polygon, 1, createPoint(REFERENCE, [5, 0, 0]));
+    (controller as any)._activeVertexIndex = 1;
+    expect(polygon.pointCount).toBe(5);
+
+    controller.cancel();
+
+    expect(polygon.pointCount).toBe(4);
+    const expectedXY: [number, number][] = [[0, 0], [10, 0], [10, 10], [0, 10]];
+    expectedXY.forEach(([x, y], i) => {
+      const vertex = polygon.getPoint(i);
+      expect(vertex.x).toBeCloseTo(x);
+      expect(vertex.y).toBeCloseTo(y);
+    });
+  });
+
+  // Drives the controller's OWN promotion code rather than simulating the resulting shape state:
+  // applyHeightInput is the htmlToolbar height-commit path, and it promotes a selected midpoint
+  // exactly as a drag on one of its handles does. `map` has a getter but its setter throws
+  // ("map property is not mutable"), so defineProperty is the only way to supply one without
+  // activating the controller on a real WebGLMap - which is what this repo's tests deliberately
+  // avoid needing. Worth the one unusual idiom: it proves the production path is what grows the
+  // vertex count, not just a hand-built shape.
+  it("undoes a promotion made through applyHeightInput, the real htmlToolbar height-commit path", () => {
+    const line = createPolyline(WGS_84, [[4.0, 50.0, 0], [4.001, 50.0, 0], [4.002, 50.0, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYLINE, wgs84Layer, {existingShape: line});
+    Object.defineProperty(controller, "map", {get: () => fakeMap, configurable: true});
+    (controller as any)._activeSegmentIndex = 1;
+
+    (controller as any).applyHeightInput(300);
+    expect(line.pointCount).toBe(4);
+
+    controller.cancel();
+
+    expect(line.pointCount).toBe(3);
+    const expectedX = [4.0, 4.001, 4.002];
+    expectedX.forEach((x, i) => {
+      expect(line.getPoint(i).x).toBeCloseTo(x);
+      expect(line.getPoint(i).z).toBeCloseTo(0);
+    });
+  });
+
+  // The reason this bug mattered in practice: the shape is mutated in place and outlives the
+  // cancelled session, so a leaked vertex is baked into the NEXT session's snapshot. The demo builds
+  // a fresh controller per edit session (demo/src/main.ts), so that is what this mirrors - without
+  // truncation the count climbs 3 -> 4 -> 5 -> 6 -> 7 across these four cancelled sessions.
+  it("does not accumulate vertices across repeated promote-then-cancel sessions on the same shape", () => {
+    const line = createPolyline(REFERENCE, [[0, 0, 0], [10, 0, 0], [20, 0, 0]]);
+
+    for (let session = 0; session < 4; session++) {
+      const controller = new Shape3DEditController(ShapeType.POLYLINE, fakeLayer, {existingShape: line});
+      (controller as any)._strategy.insertVertex(line, 1, createPoint(REFERENCE, [5, 0, 0]));
+      (controller as any)._activeVertexIndex = 1;
+      controller.cancel();
+      expect(line.pointCount).toBe(3);
+    }
+  });
+
+  // Nothing validates existingShape's vertex COUNT (the constructor only checks its type), and a
+  // Polygon is a closed ring - so a 2-point one still exposes a promotable closing-segment midpoint.
+  // Truncating 3 -> 2 there would fail canRemoveVertex's `pointCount > minVertexCount` (3 > 3), so
+  // cancel() must use the unguarded removeLastVertex: removeVertex would throw out of endEditing()
+  // and leave an editing session that can never be closed.
+  it("truncates without throwing even when the original shape was below its minimum vertex count", () => {
+    const degenerate = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: degenerate});
+    (controller as any)._strategy.insertVertex(degenerate, 2, createPoint(REFERENCE, [5, 0, 0]));
+    (controller as any)._activeVertexIndex = 2;
+
+    expect(() => controller.cancel()).not.toThrow();
+
+    expect(degenerate.pointCount).toBe(2);
+  });
+
+  // Promoting a Polygon's CLOSING segment (segmentIndex === count - 1) sets _activeVertexIndex to
+  // segmentIndex + 1 === count, which the truncation then puts out of range. The clamp that fixes
+  // this used to be unreachable/defensive; it is load-bearing now, and _activeVertexIndex is read
+  // unguarded by drawEditHandles' htmlToolbar height sync on every frame.
+  it("clamps the active vertex index back into range after truncating a closing-segment promotion", () => {
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+    (controller as any)._strategy.insertVertex(polygon, 4, createPoint(REFERENCE, [0, 5, 0]));
+    (controller as any)._activeVertexIndex = 4;
+
+    controller.cancel();
+
+    expect(polygon.pointCount).toBe(4);
+    expect((controller as any)._activeVertexIndex).toBe(3);
+  });
+
+  // A second, separate defect on the same lines: Polyline/Polygon.insertPoint stores the Point BY
+  // REFERENCE (unlike move3DPoint, which copies raw x/y/z), so restoring a removed vertex from the
+  // snapshot without .copy() aliases the snapshot INTO the live shape. Editing that vertex afterwards
+  // silently rewrites the snapshot, and a second cancel() can no longer restore it.
+  it("keeps the snapshot detached, so a second cancel() still reverts a re-inserted vertex", () => {
+    const polygon = createPolygon(REFERENCE, [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]);
+    const controller = new Shape3DEditController(ShapeType.POLYGON, fakeLayer, {existingShape: polygon});
+    // Remove a vertex, then revert - index 3 is the one cancel() restores via insertVertex.
+    polygon.removePoint(1);
+    controller.cancel();
+    expect(polygon.getPoint(3).y).toBeCloseTo(10);
+
+    controller.setVertexPosition(3, createPoint(REFERENCE, [999, 999, 999]));
+    controller.cancel();
+
+    const restored = polygon.getPoint(3);
+    expect(restored.x).toBeCloseTo(0);
+    expect(restored.y).toBeCloseTo(10);
   });
 });
 
