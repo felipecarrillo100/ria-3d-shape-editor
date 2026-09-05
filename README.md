@@ -130,7 +130,8 @@ live, editable height input for the active vertex/midpoint - never both at once 
 Finish/Cancel, whichever is active is the only one drawn and hit-testable. Every element gets a
 stable CSS class name (`.ria-3d-shape-editor-toolbar`, `.ria-3d-shape-editor-btn-finish`,
 `.ria-3d-shape-editor-btn-cancel`, `.ria-3d-shape-editor-height-input`,
-`.ria-3d-shape-editor-height-unit`) for restyling, and an optional `labels` object supplies
+`.ria-3d-shape-editor-height-unit` - the unit is a read-only field styled to match the value field
+beside it) for restyling, and an optional `labels` object supplies
 `aria-label`/`title` text for screen readers without touching the icon-only visible UI:
 
 ```typescript

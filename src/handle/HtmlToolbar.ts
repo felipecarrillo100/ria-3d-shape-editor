@@ -7,8 +7,8 @@
 //
 // Cancel/Finish are icon buttons (X/checkmark), not text, for the exact same reason the
 // GeoCanvas-drawn handles use icons rather than text: a symbol needs no translation. The height
-// input carries only a bare unit symbol ("m"/"ft", supplied by the caller from the active `uom`
-// family) rather than a full word, for the same reason.
+// value's unit sits in its own read-only field beside it, showing a bare symbol ("m"/"ft", supplied
+// by the caller from the active `uom` family) rather than a full word, for the same reason.
 // Nothing here is hardcoded English text a consuming app can't change: `labels` only ever supplies
 // `aria-label`/`title` attributes (for screen readers, which can't read an icon), not visible text.
 
@@ -20,11 +20,23 @@ const ICON_BUTTON_STYLE = "font-size:18px;line-height:1;padding:0;width:44px;hei
 const ICON_BUTTON_DISABLED_STYLE = ICON_BUTTON_STYLE + "opacity:0.4;cursor:default;";
 // Same dark translucent background/border/height as ICON_BUTTON_STYLE, so it reads as part of the
 // same toolbar rather than a mismatched light box interrupting it - box-sizing:border-box so the
-// border is included in that height rather than adding to it, and padding is horizontal-only
-// (there's no vertical padding to inflate the box - height is set directly, not padding-driven).
-const HEIGHT_INPUT_STYLE = "font-size:14px;padding:0 8px;height:44px;box-sizing:border-box;width:70px;" +
-    "border-radius:6px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);color:#fff;";
-const HEIGHT_UNIT_STYLE = "color:#fff;font-size:13px;margin-left:4px;";
+// border is included in that height rather than adding to it, and no vertical padding to inflate
+// the box (height is set directly, not padding-driven).
+//
+// The value field and the unit field share this one box declaration rather than each carrying their
+// own copy: they sit immediately next to each other, so any drift in height/border/radius between
+// them would be plainly visible.
+const HEIGHT_FIELD_BOX = "font-size:14px;height:44px;box-sizing:border-box;border-radius:6px;" +
+    "border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);color:#fff;";
+const HEIGHT_INPUT_STYLE = HEIGHT_FIELD_BOX + "padding:0 8px;width:70px;";
+// The unit is its own read-only field rather than loose text: as a bare span it was the only
+// unboxed element in a row of 44px boxed controls, which read as stray text sitting beside the
+// widget instead of part of it. Narrower than the value field, centered, and dimmed so it still
+// reads as "not editable" despite looking like an input.
+const HEIGHT_UNIT_STYLE = HEIGHT_FIELD_BOX +
+    "padding:0;width:42px;text-align:center;cursor:default;user-select:none;opacity:0.75;";
+// The two fields are one flex child of the toolbar, spaced like the toolbar spaces its own controls.
+const HEIGHT_WRAPPER_STYLE = "display:flex;gap:4px;align-items:center;";
 
 const CANCEL_GLYPH = "✕"; // ✕
 const FINISH_GLYPH = "✓"; // ✓
@@ -52,7 +64,10 @@ export interface HtmlToolbarLabels {
   cancel?: string;
   /** `aria-label`/`title` for the finish button - not visible text (the button is an icon). Default "Finish". */
   finish?: string;
-  /** `aria-label` for the height input - not visible text (the input only shows a bare unit suffix). Default "Height". */
+  /**
+   * `aria-label` for the height input - not visible text. The rendered unit symbol is appended to it
+   * automatically (e.g. "Height (m)"), since the unit's own field is aria-hidden. Default "Height".
+   */
   height?: string;
 }
 
@@ -78,12 +93,14 @@ export class HtmlToolbar {
   private readonly _finishButton: HTMLButtonElement;
   private readonly _heightWrapper: HTMLSpanElement;
   private readonly _heightInput: HTMLInputElement;
-  private readonly _heightUnit: HTMLSpanElement;
+  private readonly _heightUnit: HTMLInputElement;
   /**
    * The unit symbol currently rendered, so setHeightValue - called on every redraw - only touches
    * the DOM when it actually changes.
    */
   private _heightUnitSymbol: string | null = null;
+  /** Kept so the value field's aria-label can be rebuilt whenever either half changes. */
+  private _heightLabel = "Height";
 
   constructor(mapDomNode: HTMLElement, callbacks: HtmlToolbarCallbacks, labels?: HtmlToolbarLabels) {
     this._container = document.createElement("div");
@@ -98,16 +115,31 @@ export class HtmlToolbar {
     this._cancelButton.addEventListener("click", () => callbacks.onCancel());
 
     this._heightWrapper = document.createElement("span");
+    this._heightWrapper.setAttribute("style", HEIGHT_WRAPPER_STYLE);
     this._heightWrapper.style.display = "none";
     this._heightInput = document.createElement("input");
     this._heightInput.type = "number";
     this._heightInput.className = "ria-3d-shape-editor-height-input";
     this._heightInput.setAttribute("style", HEIGHT_INPUT_STYLE);
-    this._heightUnit = document.createElement("span");
+    this._heightUnit = document.createElement("input");
     this._heightUnit.className = "ria-3d-shape-editor-height-unit";
     this._heightUnit.setAttribute("style", HEIGHT_UNIT_STYLE);
+    // readOnly alone would still put this in the tab order and have it announced as a text field,
+    // so it's also removed from both: it is a label that happens to be drawn as a box. The unit
+    // still reaches screen readers, via the value field's own aria-label (see syncHeightAriaLabel).
+    this._heightUnit.readOnly = true;
+    this._heightUnit.tabIndex = -1;
+    this._heightUnit.setAttribute("aria-hidden", "true");
     const commitHeight = () => {
-      const value = Number(this._heightInput.value);
+      // `input[type=number]`.value is "" for anything the browser can't parse as a number, and
+      // Number("") is 0 - which Number.isFinite happily accepts - so without the empty check,
+      // clearing the field and clicking away would commit a height of ZERO rather than leaving the
+      // vertex alone. Same for any entry the browser rejects outright, e.g. a locale-comma decimal.
+      const raw = this._heightInput.value.trim();
+      if (raw === "") {
+        return;
+      }
+      const value = Number(raw);
       if (Number.isFinite(value)) {
         callbacks.onHeightCommit(value);
       }
@@ -157,7 +189,18 @@ export class HtmlToolbar {
     this._cancelButton.title = cancelLabel;
     this._finishButton.setAttribute("aria-label", finishLabel);
     this._finishButton.title = finishLabel;
-    this._heightInput.setAttribute("aria-label", heightLabel);
+    this._heightLabel = heightLabel;
+    this.syncHeightAriaLabel();
+  }
+
+  /**
+   * The value field's accessible name carries the unit, since the unit field itself is aria-hidden -
+   * so a screen reader landing on the only focusable control still hears which unit it is typing in.
+   * The symbol needs no translation, which keeps `labels.height` the only translatable half.
+   */
+  private syncHeightAriaLabel(): void {
+    this._heightInput.setAttribute("aria-label",
+        this._heightUnitSymbol ? `${this._heightLabel} (${this._heightUnitSymbol})` : this._heightLabel);
   }
 
   setFinishEnabled(enabled: boolean): void {
@@ -171,7 +214,12 @@ export class HtmlToolbar {
    * until the caller explicitly shows it once editing begins.
    */
   setVisible(visible: boolean): void {
-    this._container.style.display = visible ? "" : "none";
+    // "flex", never "": assigning an empty string REMOVES the inline display declaration, and
+    // display:flex only ever existed there (it comes from TOOLBAR_STYLE, applied as one inline
+    // style attribute). Clearing it dropped the container to a div's default display:block, which
+    // silently disabled TOOLBAR_STYLE's own gap/align-items and - once the height wrapper became a
+    // block-level flex container - broke the row into three lines.
+    this._container.style.display = visible ? "flex" : "none";
   }
 
   /**
@@ -188,11 +236,12 @@ export class HtmlToolbar {
       this._heightWrapper.style.display = "none";
       return;
     }
-    this._heightWrapper.style.display = "";
+    this._heightWrapper.style.display = "flex";
     const unitChanged = unitSymbol !== this._heightUnitSymbol;
     if (unitChanged) {
-      this._heightUnit.textContent = unitSymbol;
+      this._heightUnit.value = unitSymbol;
       this._heightUnitSymbol = unitSymbol;
+      this.syncHeightAriaLabel();
     }
     if (unitChanged || document.activeElement !== this._heightInput) {
       this._heightInput.value = value.toFixed(2);
