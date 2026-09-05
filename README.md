@@ -14,7 +14,15 @@ Works identically with mouse and touch input, with no separate code path for eit
 npm install ria-3d-shape-editor
 ```
 
-Compatible with `@luciad/ria` 2025.0 or higher.
+### Requirements
+
+- **`@luciad/ria` 2025.0 or higher**, as a peer dependency - install and license it yourself. This
+  package bundles no part of LuciadRIA and depends on no `@luciad/ria-toolbox-*` package at runtime.
+- **ESM only.** The package is `"type": "module"` and ships a single ESM build, so `require()` fails
+  with `ERR_REQUIRE_ESM`. Use `import`, via a bundler (Vite, webpack, Rollup) or native ESM.
+- **A geocentric (`EPSG:4978`) map** for the full handle set. On a 2D map the controller still
+  creates and edits shapes, but the height/rotate/whole-shape handles don't appear - there is no
+  well-defined "up" for them. See [Editing height on a 2D map](#editing-height-on-a-2d-map).
 
 ## Usage
 
@@ -47,6 +55,145 @@ controller.on("ShapeEditingFinished", ({shape, confirmed}) => {
 const controller = new Shape3DEditController(ShapeType.POLYGON, layer, {existingShape: existingPolygon});
 map.controller = controller;
 ```
+
+## Wiring it up
+
+The controller never persists anything - it mutates the shape it created or was given and tells you
+what happened. Two rules cover almost all of it:
+
+1. **Persist only on `ShapeEditingFinished` with `confirmed: true`.** That is the only signal meaning
+   "the user pressed Finish". `ShapeCreated` fires when the *creation* phase ends and editing begins,
+   which is not yet a commitment; Cancel, Escape and any other deactivation give `confirmed: false`.
+2. **You don't need to deactivate the controller.** Finish, Cancel and Escape all set
+   `map.controller = null` themselves.
+
+### Creating a new geometry
+
+What happens, in order:
+
+1. You construct the controller with a shape type and the target `layer`, then assign
+   `map.controller`. `controller.phase` is `"creating"` and the cursor becomes a crosshair.
+2. Each click places a vertex; moving the pointer in between rubber-bands the next one. A `Point`
+   finishes on its first click.
+3. Double-click finishes creation. `ShapeCreated` fires **once**, `phase` flips to `"editing"`, and
+   the crosshair reverts. **Nothing is saved yet** - this is not the signal to persist.
+4. The user now adjusts the shape with the handles. `ShapeChanged` fires on every vertex
+   move/insert/removal.
+5. Finish (✓) ends the session with `ShapeEditingFinished` / `confirmed: true` - **persist here**.
+   Cancel (✕) or Escape ends it with `confirmed: false`, and there is nothing to undo: the shape only
+   ever existed inside the controller, so simply discard it.
+6. Either way the controller sets `map.controller = null` itself.
+
+```typescript
+import {Shape3DEditController} from "ria-3d-shape-editor";
+import {ShapeType} from "@luciad/ria/shape/ShapeType.js";
+import {Feature} from "@luciad/ria/model/feature/Feature.js";
+
+const controller = new Shape3DEditController(ShapeType.POLYGON, layer);
+
+controller.on("ShapeEditingFinished", ({shape, confirmed}) => {
+  if (!confirmed) {
+    return; // Cancel/Escape - nothing was ever added, so there is nothing to undo
+  }
+  // `shape` is already in layer.model.reference, so it goes straight into the store. `store` is
+  // your own Store backing `layer` - a MemoryStore, a WFS-T store, anything. (`Store.add`/`put` are
+  // optional members of the Store interface, since a read-only store may omit them, so call them on
+  // your concrete store rather than through `layer.model.store`.)
+  Promise.resolve(store.add(new Feature(shape, {})))
+      .catch((error) => console.error("add failed:", error));
+});
+
+map.controller = controller;
+```
+
+Click to place each vertex, moving the pointer in between to preview the next one; double-click to
+finish (a single click finishes a `Point`). See [Creating a shape](#creating-a-shape).
+
+### Editing an existing geometry
+
+The important difference: the controller mutates **your** shape object, in place, from the first
+drag - so a cancel has real work to undo, and your layer needs telling that the feature is live.
+
+1. Call `layer.setEditedObject(feature)` **first** (see the note below), or the feature will appear
+   frozen while you drag it.
+2. Construct with `{existingShape}`. `phase` is `"editing"` immediately - no creation step, no
+   crosshair, no `ShapeCreated` event. The controller takes a private snapshot of the shape here.
+3. The handles edit your shape in place; `ShapeChanged` fires on every change. If you render the
+   feature yourself, it is already up to date - that is what step 1 bought you.
+4. Finish (✓) → `ShapeEditingFinished` / `confirmed: true` → **persist** (`store.put`).
+   Cancel (✕) or Escape → the controller first **reverts your shape to its snapshot** - vertex
+   positions *and* vertex count, including any midpoint you promoted - and only then fires the event
+   with `confirmed: false`. So by the time you see it, your object is already back to how it was;
+   don't persist, and don't try to undo anything yourself.
+5. Call `setEditedObject(null)` when the session ends, either way.
+
+```typescript
+import type {EditableShape, SupportedShapeType} from "ria-3d-shape-editor";
+
+const shape = feature.shape as EditableShape;
+
+// REQUIRED - see the note below. Not in RIA's public typings, hence the cast.
+(layer as unknown as {setEditedObject(f: Feature | null): void}).setEditedObject(feature);
+
+const controller = new Shape3DEditController(shape.type as SupportedShapeType, layer, {existingShape: shape});
+
+controller.on("ShapeEditingFinished", ({shape: edited, confirmed}) => {
+  if (!confirmed) {
+    // Vertex positions and count have already been reverted for you - see controller.cancel()
+    (layer as unknown as {setEditedObject(f: Feature | null): void}).setEditedObject(null);
+    return;
+  }
+  const updated = new Feature(edited, feature.properties, feature.id);
+  Promise.resolve(store.put(updated))
+      .catch((error) => console.error("put failed:", error))
+      .then(() => (layer as unknown as {setEditedObject(f: Feature | null): void}).setEditedObject(null));
+});
+
+map.controller = controller;
+```
+
+> **You must call `layer.setEditedObject(feature)` before editing an existing, already-rendered
+> feature.** `FeatureLayer` only reads `feature.shape` live while that feature is its *edited
+> object*; otherwise it paints a cached snapshot refreshed only on a model-change event. Mutating the
+> shape in place - which is exactly what this controller does - therefore does **not** make your
+> layer repaint, and the feature appears frozen while you drag it. Call `setEditedObject(null)` when
+> the session ends.
+>
+> The method exists at runtime but is absent from `FeatureLayer.d.ts`, so it needs the cast above.
+> This controller also draws the shape body itself while editing, as a deliberate always-correct
+> fallback - so a missing `setEditedObject` looks like a *doubled* or oddly-lagging shape rather than
+> nothing at all.
+
+### Which reference shapes come back in
+
+Always `layer.model.reference`, read once at construction - never `map.reference`. Height editing
+needs a geocentric map, so the drag maths happens in `EPSG:4978`/WGS84 internally, but every vertex
+is reprojected back before it is written to the shape. That matters because nothing downstream
+reprojects for you: a real backend rejects geometry in the wrong reference (GeoServer refuses a
+geocentric geometry for a geographic-native layer). Passing `layer` is how the controller learns the
+one reference its output must be in.
+
+### Editing height on a 2D map
+
+The height handle is 3D-only. On a 2D map, drive height from your own UI instead:
+
+```typescript
+import {createPoint} from "@luciad/ria/shape/ShapeFactory.js";
+import {getReference} from "@luciad/ria/reference/ReferenceProvider.js";
+import {createTransformation} from "@luciad/ria/transformation/TransformationFactory.js";
+import {Polyline} from "@luciad/ria/shape/Polyline.js";
+
+const WGS_84 = getReference("CRS:84");
+const shape = controller.shape as Polyline; // or Polygon; a Point has no getPoint - use its own x/y
+
+// Go via a geographic reference rather than writing `heightInMeters` straight into the shape's own
+// z: in a geocentric model reference, z is an ECEF coordinate, not a height above the ellipsoid.
+// setVertexPosition then reprojects back into the shape's reference for you.
+const vertex = createTransformation(shape.reference!, WGS_84).transform(shape.getPoint(index));
+controller.setVertexPosition(index, createPoint(WGS_84, [vertex.x, vertex.y, heightInMeters]));
+```
+
+This is exactly what the `htmlToolbar` height input does internally, so the two agree.
 
 ## Handles
 
@@ -215,6 +362,16 @@ a height edit made through this controller is real in the underlying data, but m
 once control returns to that layer's own painter (the shape gets flattened onto the terrain/mesh
 surface for rendering). This package's own handle visuals never drape, but it has no opinion on how
 a consuming app styles the final persisted feature.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+ISC - see [LICENSE](LICENSE). A few small math/interaction utilities are adapted from Luciad's own
+toolbox and remain under the permissive license preserved in each of those files; see below.
+`@luciad/ria` is a separate commercial product and is not covered by this license.
 
 ## Attribution
 
